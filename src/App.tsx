@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { Viewer } from "./components/Viewer";
 import { DropZone } from "./components/DropZone";
@@ -17,9 +17,12 @@ import { useCutSession } from "./hooks/useCutSession";
 import { autoPlaceCutDowels } from "./lib/cut/auto-place-cut-dowels";
 import { buildZipExport } from "./lib/exporters/zip-export";
 import { exportToMulti3MF } from "./lib/exporters/3mf";
+import { saveBytes } from "./lib/exporters/save";
 import { suggestCuts } from "./lib/cut/fit-to-printer";
 import { fitsInPrinter, dimensionsFromBBox } from "./lib/printer-presets";
 import type { ModelData, CutPlaneSpec, Dowel, TolerancePreset, PartId } from "./types";
+
+const isDesktop = import.meta.env.VITE_TARGET !== "web";
 
 export default function App() {
   const session = useCutSession();
@@ -50,6 +53,50 @@ export default function App() {
     },
     [session],
   );
+
+  /** Tauri-aware open: native dialog on desktop, falls back to hidden <input> in browser. */
+  const handleOpen = useCallback(async () => {
+    if (isDesktop) {
+      try {
+        const { open } = await import("@tauri-apps/plugin-dialog");
+        const { readFile } = await import("@tauri-apps/plugin-fs");
+        const path = await open({
+          multiple: false,
+          filters: [{ name: "3D Model", extensions: ["stl", "obj", "3mf", "glb"] }],
+        });
+        if (typeof path !== "string") return;
+        const data = await readFile(path);
+        const filename = path.split(/[/\\]/).pop() ?? "model";
+        await handleFile(new File([data as BlobPart], filename));
+        return;
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        return;
+      }
+    }
+    fileInputRef.current?.click();
+  }, [handleFile]);
+
+  /** On desktop, if Pasak was launched with a file argument (file association), load it. */
+  useEffect(() => {
+    if (!isDesktop) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const path = await invoke<string | null>("get_cli_file");
+        if (cancelled || !path) return;
+        const { readFile } = await import("@tauri-apps/plugin-fs");
+        const data = await readFile(path);
+        const filename = path.split(/[/\\]/).pop() ?? "model";
+        await handleFile(new File([data as BlobPart], filename));
+      } catch (e) {
+        console.error("CLI file load failed:", e);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // The "active" part for cut operations: the currently selected visible part,
   // or fall back to the first visible import part if nothing selected.
@@ -100,23 +147,24 @@ export default function App() {
     setShowExportDialog(true);
   };
 
-  const performExport = (opts: ExportOptions) => {
+  const performExport = async (opts: ExportOptions) => {
     const exportableParts = session.partsArray.filter((p) => p.meta.source === "cut");
     if (exportableParts.length === 0) return;
     const parts = exportableParts.filter((p) => !p.isDowel);
     const dowels = opts.includeDowels ? exportableParts.filter((p) => p.isDowel) : [];
 
     const baseName = opts.filename.replace(/\.(zip|3mf)$/i, "");
-    let blob: Blob;
+    let bytes: Uint8Array;
     let downloadName: string;
+    let mime: string;
     if (opts.format === "3mf") {
       const items = [
         ...parts.map((p) => ({ name: p.meta.name, mesh: p.mesh })),
         ...dowels.map((p) => ({ name: p.meta.name, mesh: p.mesh })),
       ];
-      const buf = exportToMulti3MF(items);
-      blob = new Blob([buf.buffer as ArrayBuffer], { type: "model/3mf" });
+      bytes = exportToMulti3MF(items);
       downloadName = `${baseName}.3mf`;
+      mime = "model/3mf";
     } else {
       const zipParts = parts.map((p) => ({
         name: `${p.meta.name.replace(/\s+/g, "_")}.stl`,
@@ -126,17 +174,12 @@ export default function App() {
         name: `dowel_${String(i + 1).padStart(2, "0")}.stl`,
         mesh: p.mesh,
       }));
-      const zip = buildZipExport(zipParts, zipDowels);
-      blob = new Blob([zip.buffer as ArrayBuffer], { type: "application/zip" });
+      bytes = buildZipExport(zipParts, zipDowels);
       downloadName = `${baseName}.zip`;
+      mime = "application/zip";
     }
 
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = downloadName;
-    a.click();
-    URL.revokeObjectURL(url);
+    await saveBytes(downloadName, mime, bytes);
     setShowExportDialog(false);
   };
 
@@ -179,7 +222,7 @@ export default function App() {
 
   useKeyboard(
     {
-      "o": () => fileInputRef.current?.click(),
+      "o": () => void handleOpen(),
       "x": () => startCut("x"),
       "y": () => startCut("y"),
       "z": () => startCut("z"),
@@ -199,7 +242,7 @@ export default function App() {
       "Ctrl+E": () => hasCutParts && setShowExportDialog(true),
       "?": () => setShowHelp((s) => !s),
     },
-    [session.undo, session.redo, hasCutParts, activePart],
+    [session.undo, session.redo, hasCutParts, activePart, handleOpen],
   );
 
   return (
@@ -216,7 +259,7 @@ export default function App() {
         }}
       />
       <Toolbar
-        onOpen={() => fileInputRef.current?.click()}
+        onOpen={handleOpen}
         onExport={onExport}
         canExport={hasCutParts}
         onUndo={session.undo}
