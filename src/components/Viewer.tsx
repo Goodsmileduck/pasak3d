@@ -29,6 +29,8 @@ interface ViewerProps {
   cutPreview?: { plane: CutPlaneSpec; bbox: THREE.Box3 } | null;
   /** M2 mode: dowel markers */
   dowels?: Dowel[];
+  /** M3: exploded-view factor 0..1 — moves each part radially outward. */
+  explodeFactor?: number;
   isDark?: boolean;
   wireframe?: boolean;
   plateMode?: PlateMode;
@@ -42,6 +44,7 @@ interface SceneContentsProps {
   cutParts?: CutPartEntry[];
   cutPreview?: { plane: CutPlaneSpec; bbox: THREE.Box3 } | null;
   dowels?: Dowel[];
+  explodeFactor: number;
   isDark: boolean;
   wireframe: boolean;
   plateMode: PlateMode;
@@ -54,6 +57,7 @@ function SceneContents({
   cutParts,
   cutPreview,
   dowels,
+  explodeFactor,
   isDark,
   wireframe,
   plateMode,
@@ -61,6 +65,8 @@ function SceneContents({
   onControlsReady,
 }: SceneContentsProps) {
   const { scene } = useThree();
+  // Snapshot original positions of cut-part groups so explode offsets can be restored cleanly.
+  const originalPositionsRef = useRef<Map<string, THREE.Vector3>>(new Map());
 
   // Background color
   useEffect(() => {
@@ -100,15 +106,17 @@ function SceneContents({
     };
   }, [rootGroup, hasCutParts, scene, controlsRef]);
 
-  // Cut-parts mode: add visible groups to scene
+  // Cut-parts mode: add visible groups to scene; snapshot original positions
   useEffect(() => {
     if (!hasCutParts || !cutParts) return;
 
-    const added: THREE.Group[] = [];
+    const added: { id: string; group: THREE.Group }[] = [];
+    const origs = originalPositionsRef.current;
     for (const part of cutParts) {
       if (part.visible) {
         scene.add(part.group);
-        added.push(part.group);
+        if (!origs.has(part.id)) origs.set(part.id, part.group.position.clone());
+        added.push({ id: part.id, group: part.group });
       }
     }
 
@@ -116,7 +124,7 @@ function SceneContents({
     const controls = controlsRef.current;
     if (controls && added.length > 0) {
       const box = new THREE.Box3();
-      for (const g of added) box.expandByObject(g);
+      for (const g of added) box.expandByObject(g.group);
       const center = box.getCenter(new THREE.Vector3());
       const size = box.getSize(new THREE.Vector3());
       const maxDim = Math.max(size.x, size.y, size.z);
@@ -132,9 +140,69 @@ function SceneContents({
     }
 
     return () => {
-      for (const g of added) scene.remove(g);
+      for (const a of added) {
+        // Restore original position before removing
+        const orig = origs.get(a.id);
+        if (orig) a.group.position.copy(orig);
+        scene.remove(a.group);
+      }
     };
   }, [cutParts, hasCutParts, scene, controlsRef]);
+
+  // Apply explode offsets — translate each visible part radially from the scene centroid.
+  useEffect(() => {
+    if (!hasCutParts || !cutParts) return;
+    const visible = cutParts.filter((p) => p.visible);
+    const origs = originalPositionsRef.current;
+    if (visible.length === 0) return;
+
+    // Centroid of all visible parts (using their original positions + bbox centers)
+    const centroid = new THREE.Vector3();
+    const partCenters: { id: string; center: THREE.Vector3 }[] = [];
+    for (const p of visible) {
+      const orig = origs.get(p.id) ?? p.group.position.clone();
+      // Compute bbox center of group at original position
+      const savedPos = p.group.position.clone();
+      p.group.position.copy(orig);
+      p.group.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(p.group);
+      const center = box.getCenter(new THREE.Vector3());
+      partCenters.push({ id: p.id, center });
+      centroid.add(center);
+      // restore (we'll write the final position below)
+      p.group.position.copy(savedPos);
+    }
+    centroid.divideScalar(visible.length);
+
+    // Diagonal of overall bbox at original positions
+    const wholeBox = new THREE.Box3();
+    for (const p of visible) {
+      const orig = origs.get(p.id) ?? p.group.position.clone();
+      const savedPos = p.group.position.clone();
+      p.group.position.copy(orig);
+      p.group.updateMatrixWorld(true);
+      wholeBox.expandByObject(p.group);
+      p.group.position.copy(savedPos);
+    }
+    const diag = wholeBox.getSize(new THREE.Vector3()).length();
+    const maxOffset = diag * 0.5;
+
+    // Apply offsets
+    for (const p of visible) {
+      const orig = origs.get(p.id);
+      if (!orig) continue;
+      const center = partCenters.find((c) => c.id === p.id)!.center;
+      const dir = center.clone().sub(centroid);
+      const len = dir.length();
+      if (len > 1e-6 && explodeFactor > 0) {
+        dir.divideScalar(len);
+        p.group.position.copy(orig).add(dir.multiplyScalar(explodeFactor * maxOffset));
+      } else {
+        p.group.position.copy(orig);
+      }
+      p.group.updateMatrixWorld(true);
+    }
+  }, [explodeFactor, cutParts, hasCutParts]);
 
   // Wireframe toggle (applies to rootGroup in M1 mode)
   useEffect(() => {
@@ -217,6 +285,7 @@ export function Viewer({
   cutParts,
   cutPreview,
   dowels,
+  explodeFactor = 0,
   isDark = false,
   wireframe = false,
   plateMode = "grid",
@@ -248,6 +317,7 @@ export function Viewer({
           cutParts={cutParts}
           cutPreview={cutPreview}
           dowels={dowels}
+          explodeFactor={explodeFactor}
           isDark={isDark}
           wireframe={wireframe}
           plateMode={plateMode}

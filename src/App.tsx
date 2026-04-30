@@ -8,10 +8,13 @@ import { Toolbar } from "./components/Toolbar";
 import { CutPanel } from "./components/CutPanel";
 import { PartsTree } from "./components/PartsTree";
 import { PrinterPanel } from "./components/PrinterPanel";
+import { ExplodedView } from "./components/ExplodedView";
+import { ExportDialog, type ExportOptions } from "./components/ExportDialog";
 import { loadModel } from "./lib/loaders";
 import { useCutSession } from "./hooks/useCutSession";
 import { autoPlaceCutDowels } from "./lib/cut/auto-place-cut-dowels";
 import { buildZipExport } from "./lib/exporters/zip-export";
+import { exportToMulti3MF } from "./lib/exporters/3mf";
 import { suggestCuts } from "./lib/cut/fit-to-printer";
 import { fitsInPrinter, dimensionsFromBBox } from "./lib/printer-presets";
 import type { ModelData, CutPlaneSpec, Dowel, TolerancePreset, PartId } from "./types";
@@ -24,6 +27,8 @@ export default function App() {
   const [previewPlane, setPreviewPlane] = useState<CutPlaneSpec | null>(null);
   const [previewDowels, setPreviewDowels] = useState<Dowel[]>([]);
   const [suggestedCuts, setSuggestedCuts] = useState<{ partId: PartId; cuts: CutPlaneSpec[] } | null>(null);
+  const [explodeFactor, setExplodeFactor] = useState(0);
+  const [showExportDialog, setShowExportDialog] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = useCallback(
@@ -86,22 +91,49 @@ export default function App() {
   };
 
   const onExport = () => {
+    const hasAny = session.partsArray.some((p) => p.meta.source === "cut");
+    if (!hasAny) return;
+    setShowExportDialog(true);
+  };
+
+  const performExport = (opts: ExportOptions) => {
     const exportableParts = session.partsArray.filter((p) => p.meta.source === "cut");
     if (exportableParts.length === 0) return;
-    const parts = exportableParts
-      .filter((p) => !p.isDowel)
-      .map((p) => ({ name: `${p.meta.name.replace(/\s+/g, "_")}.stl`, mesh: p.mesh }));
-    const dowels = exportableParts
-      .filter((p) => p.isDowel)
-      .map((p, i) => ({ name: `dowel_${String(i + 1).padStart(2, "0")}.stl`, mesh: p.mesh }));
-    const zip = buildZipExport(parts, dowels);
-    const blob = new Blob([zip.buffer as ArrayBuffer], { type: "application/zip" });
+    const parts = exportableParts.filter((p) => !p.isDowel);
+    const dowels = opts.includeDowels ? exportableParts.filter((p) => p.isDowel) : [];
+
+    const baseName = opts.filename.replace(/\.(zip|3mf)$/i, "");
+    let blob: Blob;
+    let downloadName: string;
+    if (opts.format === "3mf") {
+      const items = [
+        ...parts.map((p) => ({ name: p.meta.name, mesh: p.mesh })),
+        ...dowels.map((p) => ({ name: p.meta.name, mesh: p.mesh })),
+      ];
+      const buf = exportToMulti3MF(items);
+      blob = new Blob([buf.buffer as ArrayBuffer], { type: "model/3mf" });
+      downloadName = `${baseName}.3mf`;
+    } else {
+      const zipParts = parts.map((p) => ({
+        name: `${p.meta.name.replace(/\s+/g, "_")}.stl`,
+        mesh: p.mesh,
+      }));
+      const zipDowels = dowels.map((p, i) => ({
+        name: `dowel_${String(i + 1).padStart(2, "0")}.stl`,
+        mesh: p.mesh,
+      }));
+      const zip = buildZipExport(zipParts, zipDowels);
+      blob = new Blob([zip.buffer as ArrayBuffer], { type: "application/zip" });
+      downloadName = `${baseName}.zip`;
+    }
+
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = (modelInfo?.filename.replace(/\.[^.]+$/, "") ?? "pasak") + "-pasak.zip";
+    a.download = downloadName;
     a.click();
     URL.revokeObjectURL(url);
+    setShowExportDialog(false);
   };
 
   const onSuggestCuts = useCallback(() => {
@@ -157,10 +189,15 @@ export default function App() {
         canUndo={session.canUndo}
         canRedo={session.canRedo}
         printerSlot={
-          <PrinterPanel
-            selected={session.session.printer}
-            onChange={session.setPrinter}
-          />
+          <>
+            {hasCutParts && (
+              <ExplodedView value={explodeFactor} onChange={setExplodeFactor} />
+            )}
+            <PrinterPanel
+              selected={session.session.printer}
+              onChange={session.setPrinter}
+            />
+          </>
         }
       />
       <main className="flex-1 flex relative">
@@ -227,6 +264,7 @@ export default function App() {
               cutParts={cutPartsForViewer}
               cutPreview={previewPlane && bbox ? { plane: previewPlane, bbox } : null}
               dowels={previewDowels}
+              explodeFactor={explodeFactor}
             />
           )}
           {session.busy && (
@@ -250,6 +288,13 @@ export default function App() {
           parts={session.partsArray.map((p) => ({ visible: p.meta.visible, isDowel: p.isDowel, group: p.group }))}
           printer={session.session.printer}
           onSuggestCuts={onSuggestCuts}
+        />
+      )}
+      {showExportDialog && (
+        <ExportDialog
+          defaultFilename={(modelInfo?.filename.replace(/\.[^.]+$/, "") ?? "pasak") + "-pasak"}
+          onCancel={() => setShowExportDialog(false)}
+          onConfirm={performExport}
         />
       )}
       {suggestedCuts && (
