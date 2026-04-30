@@ -2,6 +2,16 @@ import type * as THREE from "three";
 
 export type FileFormat = "stl" | "obj" | "3mf" | "glb";
 
+export interface WorkerMeshData {
+  vertices: Float32Array;
+  normals: Float32Array;
+  indices: Uint32Array;
+  color?: number;
+}
+
+/** Progress callback for parsers: (parsed, total) where both are counts of elements processed. */
+export type ParserProgressFn = (parsed: number, total: number) => void;
+
 export type LoadProgress = {
   stage: string;
   progress: number; // 0..1
