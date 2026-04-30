@@ -3,6 +3,7 @@ import * as THREE from "three";
 import type { Dowel, CutPlaneSpec, TolerancePreset, ModelData, PartId, PrinterPreset } from "../types";
 import { runCut } from "../lib/cut/cut-client";
 import { applyAutoOrient } from "../lib/cut/auto-orient";
+import { autoPlaceCutDowels } from "../lib/cut/auto-place-cut-dowels";
 import {
   emptySession,
   importPart,
@@ -78,6 +79,61 @@ export function useCutSession() {
     [session, push],
   );
 
+  const performCutsSequential = useCallback(
+    async (
+      rootPartId: PartId,
+      planes: CutPlaneSpec[],
+      defaultDowelOpts: { count: number; diameter: number; length: number; tolerance: TolerancePreset },
+    ) => {
+      if (planes.length === 0) return;
+      setBusy(true);
+      setError(null);
+      let working = session;
+      let target = rootPartId;
+      try {
+        for (const plane of planes) {
+          const part = working.parts.get(target);
+          if (!part) throw new Error("Target part missing during sequential cuts");
+          const dowels = autoPlaceCutDowels(part.mesh, plane, {
+            count: defaultDowelOpts.count,
+            dowelDiameter: defaultDowelOpts.diameter,
+            length: defaultDowelOpts.length,
+            minSpacing: 2,
+          });
+          const result = await runCut(part.mesh, plane, dowels, defaultDowelOpts.tolerance);
+          const a = firstMeshAndGroup(result.partA);
+          const b = firstMeshAndGroup(result.partB);
+          if (!a || !b) throw new Error("Cut produced empty parts");
+          const dps = result.dowelPieces
+            .map(firstMeshAndGroup)
+            .filter((x): x is { mesh: THREE.Mesh; group: THREE.Group } => !!x);
+          applyAutoOrient(a.mesh);
+          applyAutoOrient(b.mesh);
+          dps.forEach((d) => applyAutoOrient(d.mesh));
+          working = applyCutResult(
+            working,
+            target,
+            `c${working.cuts.length + 1}`,
+            { partA: a, partB: b, dowelPieces: dps },
+            part.meta.name,
+          );
+          // Continue cutting the larger of the two new parts — most likely needs further cuts to fit.
+          const partA = working.parts.get(`${target}_a`)!;
+          const partB = working.parts.get(`${target}_b`)!;
+          const sizeA = new THREE.Box3().setFromObject(partA.group).getSize(new THREE.Vector3()).length();
+          const sizeB = new THREE.Box3().setFromObject(partB.group).getSize(new THREE.Vector3()).length();
+          target = sizeA >= sizeB ? partA.id : partB.id;
+        }
+        push(working);
+      } catch (e: any) {
+        setError(e?.message ?? String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [session, push],
+  );
+
   const undo = useCallback(() => {
     if (history.length === 0) return;
     const prev = history[history.length - 1];
@@ -118,6 +174,7 @@ export function useCutSession() {
     error,
     loadModel,
     performCut,
+    performCutsSequential,
     undo,
     redo,
     canUndo: history.length > 0,

@@ -8,11 +8,13 @@ import type { CutPlaneSpec, PrinterPreset } from "../../types";
  */
 export function suggestCuts(bbox: THREE.Box3, printer: PrinterPreset): CutPlaneSpec[] {
   const size = bbox.getSize(new THREE.Vector3());
-  const ratios: Array<{ axis: "x" | "y" | "z"; ratio: number; extent: number; min: number }> = [
-    { axis: "x", ratio: size.x / printer.buildVolume.x, extent: size.x, min: bbox.min.x },
-    { axis: "y", ratio: size.y / printer.buildVolume.y, extent: size.y, min: bbox.min.y },
-    { axis: "z", ratio: size.z / printer.buildVolume.z, extent: size.z, min: bbox.min.z },
-  ].sort((a, b) => b.ratio - a.ratio);
+  const ratios: Array<{ axis: "x" | "y" | "z"; ratio: number; extent: number; min: number }> = (
+    [
+      { axis: "x" as const, ratio: size.x / printer.buildVolume.x, extent: size.x, min: bbox.min.x },
+      { axis: "y" as const, ratio: size.y / printer.buildVolume.y, extent: size.y, min: bbox.min.y },
+      { axis: "z" as const, ratio: size.z / printer.buildVolume.z, extent: size.z, min: bbox.min.z },
+    ] as Array<{ axis: "x" | "y" | "z"; ratio: number; extent: number; min: number }>
+  ).sort((a, b) => b.ratio - a.ratio);
 
   const worst = ratios[0];
   if (worst.ratio <= 1) return [];
