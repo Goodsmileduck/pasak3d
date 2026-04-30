@@ -5,14 +5,30 @@ import * as THREE from "three";
 import type { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { BuildPlate } from "./BuildPlate";
 import { AxisCube } from "./AxisCube";
+import { CutPlane } from "./CutPlane";
+import { DowelMarkers } from "./DowelMarkers";
 import { centerOnXY } from "../lib/scene";
-import type { ModelData } from "../types";
+import type { CutPlaneSpec, Dowel } from "../types";
 import type { PlateMode } from "./plateModes";
 
 // --- Props ---
 
+interface CutPartEntry {
+  id: string;
+  group: THREE.Group;
+  visible: boolean;
+  isDowel: boolean;
+}
+
 interface ViewerProps {
-  model: ModelData;
+  /** M1 mode: single model group. Used when cutParts is absent/empty. */
+  rootGroup?: THREE.Group | null;
+  /** M2 mode: cut parts to render instead of rootGroup */
+  cutParts?: CutPartEntry[];
+  /** M2 mode: cut plane preview */
+  cutPreview?: { plane: CutPlaneSpec; bbox: THREE.Box3 } | null;
+  /** M2 mode: dowel markers */
+  dowels?: Dowel[];
   isDark?: boolean;
   wireframe?: boolean;
   plateMode?: PlateMode;
@@ -22,7 +38,10 @@ interface ViewerProps {
 // --- Inner scene: must be a child of <Canvas> ---
 
 interface SceneContentsProps {
-  model: ModelData;
+  rootGroup: THREE.Group | null;
+  cutParts?: CutPartEntry[];
+  cutPreview?: { plane: CutPlaneSpec; bbox: THREE.Box3 } | null;
+  dowels?: Dowel[];
   isDark: boolean;
   wireframe: boolean;
   plateMode: PlateMode;
@@ -31,7 +50,10 @@ interface SceneContentsProps {
 }
 
 function SceneContents({
-  model,
+  rootGroup,
+  cutParts,
+  cutPreview,
+  dowels,
   isDark,
   wireframe,
   plateMode,
@@ -45,17 +67,20 @@ function SceneContents({
     scene.background = new THREE.Color(isDark ? 0x1a1a1a : 0xf0f0f0);
   }, [isDark, scene]);
 
-  // Center model and add to scene
-  useEffect(() => {
-    const group = model.group;
+  // Determine which groups to render in scene
+  const hasCutParts = cutParts && cutParts.length > 0;
 
-    centerOnXY(group);
-    scene.add(group);
+  // Single-model mode: add rootGroup to scene
+  useEffect(() => {
+    if (hasCutParts || !rootGroup) return;
+
+    centerOnXY(rootGroup);
+    scene.add(rootGroup);
 
     // Frame camera after centering
     const controls = controlsRef.current;
     if (controls) {
-      const box = new THREE.Box3().setFromObject(group);
+      const box = new THREE.Box3().setFromObject(rootGroup);
       const center = box.getCenter(new THREE.Vector3());
       const size = box.getSize(new THREE.Vector3());
       const maxDim = Math.max(size.x, size.y, size.z);
@@ -71,13 +96,50 @@ function SceneContents({
     }
 
     return () => {
-      scene.remove(group);
+      scene.remove(rootGroup);
     };
-  }, [model, scene, controlsRef]);
+  }, [rootGroup, hasCutParts, scene, controlsRef]);
 
-  // Wireframe toggle
+  // Cut-parts mode: add visible groups to scene
   useEffect(() => {
-    model.group.traverse((child) => {
+    if (!hasCutParts || !cutParts) return;
+
+    const added: THREE.Group[] = [];
+    for (const part of cutParts) {
+      if (part.visible) {
+        scene.add(part.group);
+        added.push(part.group);
+      }
+    }
+
+    // Frame camera to encompass all visible parts
+    const controls = controlsRef.current;
+    if (controls && added.length > 0) {
+      const box = new THREE.Box3();
+      for (const g of added) box.expandByObject(g);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const dist = maxDim * 2.0;
+
+      controls.target.copy(center);
+      controls.object.position.set(
+        center.x + dist,
+        center.y - dist,
+        center.z + dist * 0.8,
+      );
+      controls.update();
+    }
+
+    return () => {
+      for (const g of added) scene.remove(g);
+    };
+  }, [cutParts, hasCutParts, scene, controlsRef]);
+
+  // Wireframe toggle (applies to rootGroup in M1 mode)
+  useEffect(() => {
+    if (!rootGroup) return;
+    rootGroup.traverse((child) => {
       if (child instanceof THREE.Mesh) {
         const mats = Array.isArray(child.material)
           ? child.material
@@ -87,7 +149,12 @@ function SceneContents({
         });
       }
     });
-  }, [model, wireframe]);
+  }, [rootGroup, wireframe]);
+
+  // The model prop for BuildPlate — prefer rootGroup in M1, first visible cut group in M2
+  const buildPlateModel = hasCutParts && cutParts
+    ? (cutParts.find((p) => p.visible)?.group ?? null)
+    : rootGroup;
 
   return (
     <>
@@ -112,7 +179,17 @@ function SceneContents({
       <directionalLight position={[-5, 5, -5]} intensity={0.3} color={0x8888ff} />
 
       {/* Build plate */}
-      <BuildPlate mode={plateMode} isDark={isDark} model={model.group} />
+      <BuildPlate mode={plateMode} isDark={isDark} model={buildPlateModel} />
+
+      {/* Cut plane preview */}
+      {cutPreview && (
+        <CutPlane plane={cutPreview.plane} bbox={cutPreview.bbox} />
+      )}
+
+      {/* Dowel markers */}
+      {dowels && dowels.length > 0 && (
+        <DowelMarkers dowels={dowels} />
+      )}
 
       {/* OrbitControls */}
       <DreiOrbitControls
@@ -136,7 +213,10 @@ function SceneContents({
 // --- Outer component ---
 
 export function Viewer({
-  model,
+  rootGroup = null,
+  cutParts,
+  cutPreview,
+  dowels,
   isDark = false,
   wireframe = false,
   plateMode = "grid",
@@ -164,7 +244,10 @@ export function Viewer({
         className="w-full h-full block"
       >
         <SceneContents
-          model={model}
+          rootGroup={rootGroup}
+          cutParts={cutParts}
+          cutPreview={cutPreview}
+          dowels={dowels}
           isDark={isDark}
           wireframe={wireframe}
           plateMode={plateMode}
