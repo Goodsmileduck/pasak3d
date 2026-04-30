@@ -6,6 +6,7 @@ import { StatusBar } from "./components/StatusBar";
 import { Spinner } from "./components/Spinner";
 import { Toolbar } from "./components/Toolbar";
 import { CutPanel } from "./components/CutPanel";
+import { PrinterPanel } from "./components/PrinterPanel";
 import { loadModel } from "./lib/loaders";
 import { useCutSession } from "./hooks/useCutSession";
 import { autoPlaceCutDowels } from "./lib/cut/auto-place-cut-dowels";
@@ -134,6 +135,12 @@ export default function App() {
         onOpen={() => fileInputRef.current?.click()}
         onExport={onExport}
         canExport={hasCutParts}
+        printerSlot={
+          <PrinterPanel
+            selected={session.session.printer}
+            onChange={session.setPrinter}
+          />
+        }
       />
       <main className="flex-1 flex relative">
         {showCutPanel && bbox && (
@@ -200,7 +207,17 @@ export default function App() {
           )}
         </div>
       </main>
-      {modelInfo && <StatusBar info={modelInfo} isDark={false} isLoading={false} error={null} />}
+      {modelInfo && (
+        <StatusBar
+          info={modelInfo}
+          isDark={false}
+          isLoading={false}
+          error={null}
+          parts={session.partsArray.map((p) => ({ visible: p.meta.visible, isDowel: p.isDowel, group: p.group }))}
+          printer={session.session.printer}
+          onSuggestCuts={() => { /* M3 B3: filled in Task 6 */ }}
+        />
+      )}
     </div>
   );
 }
