@@ -1,0 +1,74 @@
+name: Cleanup Old Production Deployments
+
+on:
+  workflow_run:
+    workflows: ["Deploy Web"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  cleanup:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old production deployments (keep 5 most recent)
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          KEEP_COUNT: 5
+        run: |
+          BASE_URL="https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/pages/projects/pasak/deployments"
+          page=1
+          all_ids=""
+
+          while true; do
+            response=$(curl -s \
+              "$BASE_URL?per_page=25&page=$page" \
+              -H "Authorization: Bearer $CF_API_TOKEN")
+
+            success=$(echo "$response" | jq -r '.success // false')
+            if [ "$success" != "true" ]; then
+              echo "API call failed:"
+              echo "$response" | jq -r '.errors // "unknown error"'
+              exit 1
+            fi
+
+            ids=$(echo "$response" | jq -r '
+              [.result[] | select(.deployment_trigger.metadata.branch == "main")]
+              | sort_by(.created_on) | reverse
+              | .[].id
+            ')
+
+            if [ -z "$ids" ]; then
+              break
+            fi
+
+            all_ids="$all_ids $ids"
+
+            count=$(echo "$response" | jq '.result | length')
+            if [ "$count" -lt 25 ]; then
+              break
+            fi
+            page=$((page + 1))
+          done
+
+          if [ -z "$(echo "$all_ids" | tr -d ' ')" ]; then
+            echo "No main-branch deployments found"
+            exit 0
+          fi
+
+          i=0
+          for id in $all_ids; do
+            i=$((i + 1))
+            if [ "$i" -le "$KEEP_COUNT" ]; then
+              echo "Keeping deployment #$i: $id"
+              continue
+            fi
+
+            echo "Deleting deployment #$i: $id"
+            curl -s -X DELETE \
+              "$BASE_URL/$id?force=true" \
+              -H "Authorization: Bearer $CF_API_TOKEN" | jq -r 'if .success then "  ✓ deleted" else "  ✗ \(.errors)" end'
+          done
+
+          echo "Done. Kept $KEEP_COUNT most recent, deleted $((i > KEEP_COUNT ? i - KEEP_COUNT : 0)) old deployments."
