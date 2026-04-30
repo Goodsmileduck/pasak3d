@@ -48,7 +48,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/Goodsmileduck/pasak/releases/latest/download/latest.json"
+        "https://github.com/Goodsmileduck/pasak3d/releases/latest/download/latest.json"
       ],
       "pubkey": "REPLACE_WITH_PASAK_PUBKEY_FROM_PREFLIGHT",
       "windows": {

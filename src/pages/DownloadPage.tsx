@@ -9,7 +9,7 @@ export function DownloadPage() {
         </p>
         <a
           className="inline-block bg-emerald-600 text-white px-4 py-2 rounded font-medium hover:bg-emerald-700 transition-colors"
-          href="https://github.com/Goodsmileduck/pasak/releases/latest"
+          href="https://github.com/Goodsmileduck/pasak3d/releases/latest"
           target="_blank"
           rel="noreferrer"
         >
