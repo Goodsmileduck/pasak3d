@@ -6,6 +6,7 @@ import { StatusBar } from "./components/StatusBar";
 import { Spinner } from "./components/Spinner";
 import { Toolbar } from "./components/Toolbar";
 import { CutPanel } from "./components/CutPanel";
+import { PartsTree } from "./components/PartsTree";
 import { PrinterPanel } from "./components/PrinterPanel";
 import { loadModel } from "./lib/loaders";
 import { useCutSession } from "./hooks/useCutSession";
@@ -151,6 +152,10 @@ export default function App() {
         onOpen={() => fileInputRef.current?.click()}
         onExport={onExport}
         canExport={hasCutParts}
+        onUndo={session.undo}
+        onRedo={session.redo}
+        canUndo={session.canUndo}
+        canRedo={session.canRedo}
         printerSlot={
           <PrinterPanel
             selected={session.session.printer}
@@ -159,6 +164,19 @@ export default function App() {
         }
       />
       <main className="flex-1 flex relative">
+        {hasContent && (
+          <PartsTree
+            parts={session.partsArray}
+            selectedId={session.session.selectedPartId}
+            onSelect={(id) => {
+              session.selectPartId(id);
+              setShowCutPanel(true);
+              setPreviewPlane(null);
+              setPreviewDowels([]);
+            }}
+            onToggleVisible={session.togglePartVisible}
+          />
+        )}
         {showCutPanel && bbox && (
           <CutPanel
             bboxMin={bbox.min.toArray() as [number, number, number]}
