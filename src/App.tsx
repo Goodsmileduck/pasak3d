@@ -21,29 +21,43 @@ export default function App() {
   const [previewDowels, setPreviewDowels] = useState<Dowel[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFile = useCallback(async (file: File) => {
-    setError(null);
-    try {
-      const buf = await file.arrayBuffer();
-      const data = await loadModel(file.name, buf, file.size);
-      session.loadModel(data);
-      setModelInfo(data.info);
-      setShowCutPanel(true);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+  const handleFile = useCallback(
+    async (file: File) => {
+      setError(null);
+      try {
+        const buf = await file.arrayBuffer();
+        const data = await loadModel(file.name, buf, file.size);
+        session.loadModel(data);
+        setModelInfo(data.info);
+        setShowCutPanel(true);
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [session],
+  );
+
+  // The "active" part for cut operations: the currently selected visible part,
+  // or fall back to the first visible import part if nothing selected.
+  const activePart = useMemo(() => {
+    const sel = session.session.selectedPartId;
+    if (sel) {
+      const p = session.session.parts.get(sel);
+      if (p && p.meta.visible) return p;
     }
-  }, [session]);
+    return session.partsArray.find((p) => p.meta.visible && !p.isDowel) ?? null;
+  }, [session.session, session.partsArray]);
 
   const bbox = useMemo(() => {
-    if (!session.rootPart) return null;
-    const b = new THREE.Box3().setFromObject(session.rootPart.group);
+    if (!activePart) return null;
+    const b = new THREE.Box3().setFromObject(activePart.group);
     return b;
-  }, [session.rootPart]);
+  }, [activePart]);
 
   const onPreview = (plane: CutPlaneSpec, dowelsHint: Dowel[], _t: TolerancePreset) => {
-    if (!session.rootPart) return;
+    if (!activePart) return;
     setPreviewPlane(plane);
-    const placed = autoPlaceCutDowels(session.rootPart.mesh, plane, {
+    const placed = autoPlaceCutDowels(activePart.mesh, plane, {
       count: dowelsHint.length,
       dowelDiameter: dowelsHint[0]?.diameter ?? 5,
       length: dowelsHint[0]?.length ?? 20,
@@ -53,25 +67,26 @@ export default function App() {
   };
 
   const onCut = (plane: CutPlaneSpec, dowelsHint: Dowel[], tolerance: TolerancePreset) => {
-    if (!session.rootPart) return;
-    const placed = autoPlaceCutDowels(session.rootPart.mesh, plane, {
+    if (!activePart) return;
+    const placed = autoPlaceCutDowels(activePart.mesh, plane, {
       count: dowelsHint.length,
       dowelDiameter: dowelsHint[0]?.diameter ?? 5,
       length: dowelsHint[0]?.length ?? 20,
       minSpacing: 2,
     });
-    session.performCut(plane, placed, tolerance);
+    void session.performCut(activePart.id, plane, placed, tolerance);
     setShowCutPanel(false);
     setPreviewPlane(null);
     setPreviewDowels([]);
   };
 
   const onExport = () => {
-    if (session.cutParts.length === 0) return;
-    const parts = session.cutParts
+    const exportableParts = session.partsArray.filter((p) => p.meta.source === "cut");
+    if (exportableParts.length === 0) return;
+    const parts = exportableParts
       .filter((p) => !p.isDowel)
       .map((p) => ({ name: `${p.meta.name.replace(/\s+/g, "_")}.stl`, mesh: p.mesh }));
-    const dowels = session.cutParts
+    const dowels = exportableParts
       .filter((p) => p.isDowel)
       .map((p, i) => ({ name: `dowel_${String(i + 1).padStart(2, "0")}.stl`, mesh: p.mesh }));
     const zip = buildZipExport(parts, dowels);
@@ -84,9 +99,23 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  const cutParts = session.cutParts.length > 0
-    ? session.cutParts.map((p) => ({ id: p.id, group: p.group, visible: p.meta.visible, isDowel: p.isDowel }))
+  const hasCutParts = session.partsArray.some((p) => p.meta.source === "cut");
+
+  // Build the viewer's cutParts list from all visible parts when a cut has been done.
+  // When no cut has happened yet, the imported root part is passed as rootGroup.
+  const importRoot = session.partsArray.find((p) => p.meta.source === "import") ?? null;
+  const hasAnyCut = session.partsArray.some((p) => p.meta.source === "cut");
+
+  const cutPartsForViewer = hasAnyCut
+    ? session.partsArray.map((p) => ({
+        id: p.id,
+        group: p.group,
+        visible: p.meta.visible,
+        isDowel: p.isDowel,
+      }))
     : undefined;
+
+  const hasContent = importRoot !== null || hasAnyCut;
 
   return (
     <div className="h-full w-full flex flex-col bg-slate-100">
@@ -104,7 +133,7 @@ export default function App() {
       <Toolbar
         onOpen={() => fileInputRef.current?.click()}
         onExport={onExport}
-        canExport={session.cutParts.length > 0}
+        canExport={hasCutParts}
       />
       <main className="flex-1 flex relative">
         {showCutPanel && bbox && (
@@ -122,7 +151,7 @@ export default function App() {
           />
         )}
         <div className="flex-1 relative">
-          {!session.rootPart && cutParts === undefined ? (
+          {!hasContent ? (
             <DropZone onFile={handleFile} isDark={false}>
               <div className="w-full h-full flex flex-col items-center justify-center gap-3 bg-slate-100 text-slate-500">
                 <svg
@@ -153,8 +182,8 @@ export default function App() {
             </DropZone>
           ) : (
             <Viewer
-              rootGroup={session.rootPart?.group ?? null}
-              cutParts={cutParts}
+              rootGroup={hasAnyCut ? null : (importRoot?.group ?? null)}
+              cutParts={cutPartsForViewer}
               cutPreview={previewPlane && bbox ? { plane: previewPlane, bbox } : null}
               dowels={previewDowels}
             />
