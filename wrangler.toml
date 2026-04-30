@@ -1,0 +1,6 @@
+name = "pasak"
+compatibility_date = "2025-01-01"
+pages_build_output_dir = "dist"
+
+# Custom domain: pasak.3dlab.id (configured via Cloudflare Pages dashboard)
+# v1 has no D1 / R2 bindings — pure static site.
