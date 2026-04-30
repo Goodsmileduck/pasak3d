@@ -1,4 +1,3 @@
-// @ts-expect-error - manifold-3d types
 import Module from "manifold-3d";
 
 let modulePromise: Promise<Awaited<ReturnType<typeof Module>>> | null = null;
