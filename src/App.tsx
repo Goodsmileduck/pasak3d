@@ -10,6 +10,8 @@ import { PartsTree } from "./components/PartsTree";
 import { PrinterPanel } from "./components/PrinterPanel";
 import { ExplodedView } from "./components/ExplodedView";
 import { ExportDialog, type ExportOptions } from "./components/ExportDialog";
+import { HelpOverlay } from "./components/HelpOverlay";
+import { useKeyboard } from "./hooks/useKeyboard";
 import { loadModel } from "./lib/loaders";
 import { useCutSession } from "./hooks/useCutSession";
 import { autoPlaceCutDowels } from "./lib/cut/auto-place-cut-dowels";
@@ -29,6 +31,8 @@ export default function App() {
   const [suggestedCuts, setSuggestedCuts] = useState<{ partId: PartId; cuts: CutPlaneSpec[] } | null>(null);
   const [explodeFactor, setExplodeFactor] = useState(0);
   const [showExportDialog, setShowExportDialog] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [cutAxis, setCutAxis] = useState<"x" | "y" | "z">("x");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = useCallback(
@@ -167,6 +171,37 @@ export default function App() {
 
   const hasContent = importRoot !== null || hasAnyCut;
 
+  const startCut = (axis: "x" | "y" | "z") => {
+    if (!activePart) return;
+    setCutAxis(axis);
+    setShowCutPanel(true);
+  };
+
+  useKeyboard(
+    {
+      "o": () => fileInputRef.current?.click(),
+      "x": () => startCut("x"),
+      "y": () => startCut("y"),
+      "z": () => startCut("z"),
+      "Escape": () => {
+        setShowCutPanel(false);
+        setShowExportDialog(false);
+        setShowHelp(false);
+        setSuggestedCuts(null);
+        setPreviewPlane(null);
+        setPreviewDowels([]);
+      },
+      "Ctrl+z": session.undo,
+      "Ctrl+Z": session.undo,
+      "Ctrl+Shift+Z": session.redo,
+      "Ctrl+Shift+z": session.redo,
+      "Ctrl+e": () => hasCutParts && setShowExportDialog(true),
+      "Ctrl+E": () => hasCutParts && setShowExportDialog(true),
+      "?": () => setShowHelp((s) => !s),
+    },
+    [session.undo, session.redo, hasCutParts, activePart],
+  );
+
   return (
     <div className="h-full w-full flex flex-col bg-slate-100">
       <input
@@ -218,6 +253,8 @@ export default function App() {
           <CutPanel
             bboxMin={bbox.min.toArray() as [number, number, number]}
             bboxMax={bbox.max.toArray() as [number, number, number]}
+            axis={cutAxis}
+            onAxisChange={setCutAxis}
             onPreviewChange={onPreview}
             onCut={onCut}
             onCancel={() => {
@@ -256,6 +293,18 @@ export default function App() {
                 >
                   Browse file
                 </button>
+                <button
+                  className="text-xs text-blue-600 hover:underline mt-2"
+                  onClick={async () => {
+                    try {
+                      const res = await fetch("/sample-keycap.3mf");
+                      const blob = await res.blob();
+                      void handleFile(new File([blob], "sample-keycap.3mf"));
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : String(e));
+                    }
+                  }}
+                >Try with a sample model</button>
               </div>
             </DropZone>
           ) : (
@@ -273,8 +322,23 @@ export default function App() {
             </div>
           )}
           {(error || session.error) && (
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-red-100 text-red-800 px-4 py-2 rounded shadow">
-              {error || session.error}
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 max-w-md bg-red-100 text-red-800 px-4 py-2 rounded shadow flex items-start gap-2">
+              <span className="text-sm">
+                {(() => {
+                  const raw = error || session.error || "";
+                  if (/does not intersect/i.test(raw))
+                    return "Cut plane doesn't intersect the part. Try repositioning.";
+                  if (/out of memory|RangeError/i.test(raw))
+                    return "Cut failed (out of memory). For meshes this large, try the desktop version.";
+                  if (/not manifold|gaps/i.test(raw))
+                    return "This mesh has gaps and can't be cut reliably. Try repairing it in your CAD/slicer first.";
+                  return raw;
+                })()}
+              </span>
+              <button
+                className="text-xs underline ml-auto"
+                onClick={() => setError(null)}
+              >Dismiss</button>
             </div>
           )}
         </div>
@@ -297,6 +361,7 @@ export default function App() {
           onConfirm={performExport}
         />
       )}
+      {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
       {suggestedCuts && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
           <div className="bg-white rounded shadow p-4 max-w-md">

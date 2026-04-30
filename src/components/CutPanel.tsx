@@ -5,15 +5,16 @@ import { TOLERANCE_VALUES } from "../types";
 type Props = {
   bboxMin: [number, number, number];
   bboxMax: [number, number, number];
-  initialAxis?: "x" | "y" | "z";
+  /** Controlled axis. Owner is App.tsx so keyboard shortcuts can drive it. */
+  axis: "x" | "y" | "z";
+  onAxisChange: (a: "x" | "y" | "z") => void;
   onPreviewChange: (plane: CutPlaneSpec, dowels: Dowel[], tolerance: TolerancePreset) => void;
   onCut: (plane: CutPlaneSpec, dowels: Dowel[], tolerance: TolerancePreset) => void;
   onCancel: () => void;
   busy: boolean;
 };
 
-export function CutPanel({ bboxMin, bboxMax, initialAxis = "x", onPreviewChange, onCut, onCancel, busy }: Props) {
-  const [axis, setAxis] = useState<"x" | "y" | "z">(initialAxis);
+export function CutPanel({ bboxMin, bboxMax, axis, onAxisChange, onPreviewChange, onCut, onCancel, busy }: Props) {
   const axisIdx = axis === "x" ? 0 : axis === "y" ? 1 : 2;
   const min = bboxMin[axisIdx];
   const max = bboxMax[axisIdx];
@@ -61,7 +62,7 @@ export function CutPanel({ bboxMin, bboxMax, initialAxis = "x", onPreviewChange,
             <button
               key={a}
               className={`flex-1 py-1 rounded ${axis === a ? "bg-slate-900 text-white" : "bg-slate-100"}`}
-              onClick={() => { setAxis(a); fire(onPreviewChange); }}
+              onClick={() => { onAxisChange(a); fire(onPreviewChange); }}
             >{a.toUpperCase()}</button>
           ))}
         </div>
