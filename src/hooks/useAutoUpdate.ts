@@ -19,8 +19,7 @@ export interface AutoUpdateState {
   dismiss: () => void;
 }
 
-// VITE_TARGET is only set to "web" for web builds; desktop/Tauri builds leave it undefined
-const isTauri = import.meta.env.VITE_TARGET !== "web";
+import { isDesktop as isTauri } from "../lib/platform";
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

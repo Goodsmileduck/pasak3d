@@ -12,7 +12,6 @@ import { ExplodedView } from "./components/ExplodedView";
 import { ExportDialog, type ExportOptions } from "./components/ExportDialog";
 import { HelpOverlay } from "./components/HelpOverlay";
 import { UpdateNotification } from "./components/UpdateNotification";
-import { DownloadPage } from "./pages/DownloadPage";
 import { useKeyboard } from "./hooks/useKeyboard";
 import { useAutoUpdate } from "./hooks/useAutoUpdate";
 import { loadModel } from "./lib/loaders";
@@ -23,17 +22,17 @@ import { exportToMulti3MF } from "./lib/exporters/3mf";
 import { saveBytes } from "./lib/exporters/save";
 import { suggestCuts } from "./lib/cut/fit-to-printer";
 import { fitsInPrinter, dimensionsFromBBox } from "./lib/printer-presets";
+import { isDesktop, basename } from "./lib/platform";
 import type { ModelData, CutPlaneSpec, Dowel, TolerancePreset, PartId } from "./types";
 
-const isDesktop = import.meta.env.VITE_TARGET !== "web";
+/** Read a file from disk via Tauri and feed it to the standard load pipeline. */
+async function loadFileFromPath(path: string, onFile: (f: File) => Promise<void>): Promise<void> {
+  const { readFile } = await import("@tauri-apps/plugin-fs");
+  const data = await readFile(path);
+  await onFile(new File([data as BlobPart], basename(path)));
+}
 
 export default function App() {
-  // Simple location-based routing — no need for react-router for one secondary page.
-  // CF Pages serves index.html for unknown paths so /download works without server config.
-  if (typeof window !== "undefined" && window.location.pathname === "/download") {
-    return <DownloadPage />;
-  }
-
   const session = useCutSession();
   const [modelInfo, setModelInfo] = useState<ModelData["info"] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -69,15 +68,12 @@ export default function App() {
     if (isDesktop) {
       try {
         const { open } = await import("@tauri-apps/plugin-dialog");
-        const { readFile } = await import("@tauri-apps/plugin-fs");
         const path = await open({
           multiple: false,
           filters: [{ name: "3D Model", extensions: ["stl", "obj", "3mf", "glb"] }],
         });
         if (typeof path !== "string") return;
-        const data = await readFile(path);
-        const filename = path.split(/[/\\]/).pop() ?? "model";
-        await handleFile(new File([data as BlobPart], filename));
+        await loadFileFromPath(path, handleFile);
         return;
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -96,17 +92,13 @@ export default function App() {
         const { invoke } = await import("@tauri-apps/api/core");
         const path = await invoke<string | null>("get_cli_file");
         if (cancelled || !path) return;
-        const { readFile } = await import("@tauri-apps/plugin-fs");
-        const data = await readFile(path);
-        const filename = path.split(/[/\\]/).pop() ?? "model";
-        await handleFile(new File([data as BlobPart], filename));
+        await loadFileFromPath(path, handleFile);
       } catch (e) {
         console.error("CLI file load failed:", e);
       }
     })();
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [handleFile]);
 
   // The "active" part for cut operations: the currently selected visible part,
   // or fall back to the first visible import part if nothing selected.
@@ -194,26 +186,27 @@ export default function App() {
   };
 
   const onSuggestCuts = useCallback(() => {
-    if (!session.session.printer) return;
-    const tooBig = session.partsArray.find((p) => {
-      if (!p.meta.visible || p.isDowel) return false;
+    const printer = session.session.printer;
+    if (!printer) return;
+    let target: { id: PartId; bbox: THREE.Box3 } | null = null;
+    for (const p of session.partsArray) {
+      if (!p.meta.visible || p.isDowel) continue;
       const bb = new THREE.Box3().setFromObject(p.group);
-      return !fitsInPrinter(dimensionsFromBBox(bb), session.session.printer!);
-    });
-    if (!tooBig) return;
-    const bb = new THREE.Box3().setFromObject(tooBig.group);
-    const cuts = suggestCuts(bb, session.session.printer);
-    setSuggestedCuts({ partId: tooBig.id, cuts });
+      if (!fitsInPrinter(dimensionsFromBBox(bb), printer)) {
+        target = { id: p.id, bbox: bb };
+        break;
+      }
+    }
+    if (!target) return;
+    setSuggestedCuts({ partId: target.id, cuts: suggestCuts(target.bbox, printer) });
   }, [session.session.printer, session.partsArray]);
-
-  const hasCutParts = session.partsArray.some((p) => p.meta.source === "cut");
 
   // Build the viewer's cutParts list from all visible parts when a cut has been done.
   // When no cut has happened yet, the imported root part is passed as rootGroup.
   const importRoot = session.partsArray.find((p) => p.meta.source === "import") ?? null;
-  const hasAnyCut = session.partsArray.some((p) => p.meta.source === "cut");
+  const hasCutParts = session.partsArray.some((p) => p.meta.source === "cut");
 
-  const cutPartsForViewer = hasAnyCut
+  const cutPartsForViewer = hasCutParts
     ? session.partsArray.map((p) => ({
         id: p.id,
         group: p.group,
@@ -222,7 +215,7 @@ export default function App() {
       }))
     : undefined;
 
-  const hasContent = importRoot !== null || hasAnyCut;
+  const hasContent = importRoot !== null;
 
   const startCut = (axis: "x" | "y" | "z") => {
     if (!activePart) return;
@@ -362,7 +355,7 @@ export default function App() {
             </DropZone>
           ) : (
             <Viewer
-              rootGroup={hasAnyCut ? null : (importRoot?.group ?? null)}
+              rootGroup={hasCutParts ? null : (importRoot?.group ?? null)}
               cutParts={cutPartsForViewer}
               cutPreview={previewPlane && bbox ? { plane: previewPlane, bbox } : null}
               dowels={previewDowels}
