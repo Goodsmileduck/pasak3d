@@ -11,7 +11,9 @@ import { PrinterPanel } from "./components/PrinterPanel";
 import { ExplodedView } from "./components/ExplodedView";
 import { ExportDialog, type ExportOptions } from "./components/ExportDialog";
 import { HelpOverlay } from "./components/HelpOverlay";
+import { UpdateNotification } from "./components/UpdateNotification";
 import { useKeyboard } from "./hooks/useKeyboard";
+import { useAutoUpdate } from "./hooks/useAutoUpdate";
 import { loadModel } from "./lib/loaders";
 import { useCutSession } from "./hooks/useCutSession";
 import { autoPlaceCutDowels } from "./lib/cut/auto-place-cut-dowels";
@@ -37,6 +39,7 @@ export default function App() {
   const [showHelp, setShowHelp] = useState(false);
   const [cutAxis, setCutAxis] = useState<"x" | "y" | "z">("x");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const update = useAutoUpdate();
 
   const handleFile = useCallback(
     async (file: File) => {
@@ -405,6 +408,7 @@ export default function App() {
         />
       )}
       {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
+      <UpdateNotification update={update} isDark={false} />
       {suggestedCuts && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
           <div className="bg-white rounded shadow p-4 max-w-md">
