@@ -69,7 +69,7 @@ function drawLogo(ctx: CanvasRenderingContext2D, size: number, alpha: number, co
     ctx.restore();
 }
 
-/** Draw logo + "3D Lab Viewer" title into the center of the current tile canvas */
+/** Draw logo + "Pasak" title into the center of the current tile canvas */
 function drawTileContent(
     ctx: CanvasRenderingContext2D,
     alpha: number,
@@ -88,7 +88,7 @@ function drawTileContent(
     ctx.font = `bold ${FONT_SIZE}px Arial, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    ctx.fillText("3D Lab Viewer", TILE_SIZE / 2, CONTENT_TOP + LOGO_H + TITLE_GAP);
+    ctx.fillText("Pasak", TILE_SIZE / 2, CONTENT_TOP + LOGO_H + TITLE_GAP);
     ctx.restore();
 }
 
