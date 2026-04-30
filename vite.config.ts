@@ -32,6 +32,24 @@ export default defineConfig({
     format: "es",
   },
 
+  // In web mode, Tauri imports must be externalized so the bundler doesn't
+  // try to resolve native plugin packages that don't exist in browsers.
+  build: {
+    rollupOptions: isWeb
+      ? {
+          external: [
+            "@tauri-apps/api",
+            "@tauri-apps/api/core",
+            "@tauri-apps/plugin-dialog",
+            "@tauri-apps/plugin-fs",
+            "@tauri-apps/plugin-shell",
+            "@tauri-apps/plugin-updater",
+            "@tauri-apps/plugin-process",
+          ],
+        }
+      : {},
+  },
+
   test: {
     environment: "jsdom",
     setupFiles: ["./tests/setup.ts"],
