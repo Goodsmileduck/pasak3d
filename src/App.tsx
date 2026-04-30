@@ -11,7 +11,9 @@ import { loadModel } from "./lib/loaders";
 import { useCutSession } from "./hooks/useCutSession";
 import { autoPlaceCutDowels } from "./lib/cut/auto-place-cut-dowels";
 import { buildZipExport } from "./lib/exporters/zip-export";
-import type { ModelData, CutPlaneSpec, Dowel, TolerancePreset } from "./types";
+import { suggestCuts } from "./lib/cut/fit-to-printer";
+import { fitsInPrinter, dimensionsFromBBox } from "./lib/printer-presets";
+import type { ModelData, CutPlaneSpec, Dowel, TolerancePreset, PartId } from "./types";
 
 export default function App() {
   const session = useCutSession();
@@ -20,6 +22,7 @@ export default function App() {
   const [showCutPanel, setShowCutPanel] = useState(false);
   const [previewPlane, setPreviewPlane] = useState<CutPlaneSpec | null>(null);
   const [previewDowels, setPreviewDowels] = useState<Dowel[]>([]);
+  const [suggestedCuts, setSuggestedCuts] = useState<{ partId: PartId; cuts: CutPlaneSpec[] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = useCallback(
@@ -99,6 +102,19 @@ export default function App() {
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  const onSuggestCuts = useCallback(() => {
+    if (!session.session.printer) return;
+    const tooBig = session.partsArray.find((p) => {
+      if (!p.meta.visible || p.isDowel) return false;
+      const bb = new THREE.Box3().setFromObject(p.group);
+      return !fitsInPrinter(dimensionsFromBBox(bb), session.session.printer!);
+    });
+    if (!tooBig) return;
+    const bb = new THREE.Box3().setFromObject(tooBig.group);
+    const cuts = suggestCuts(bb, session.session.printer);
+    setSuggestedCuts({ partId: tooBig.id, cuts });
+  }, [session.session.printer, session.partsArray]);
 
   const hasCutParts = session.partsArray.some((p) => p.meta.source === "cut");
 
@@ -215,8 +231,26 @@ export default function App() {
           error={null}
           parts={session.partsArray.map((p) => ({ visible: p.meta.visible, isDowel: p.isDowel, group: p.group }))}
           printer={session.session.printer}
-          onSuggestCuts={() => { /* M3 B3: filled in Task 6 */ }}
+          onSuggestCuts={onSuggestCuts}
         />
+      )}
+      {suggestedCuts && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+          <div className="bg-white rounded shadow p-4 max-w-md">
+            <h3 className="font-semibold">Suggested cuts</h3>
+            <p className="text-sm">Will add {suggestedCuts.cuts.length} cut(s) producing {suggestedCuts.cuts.length + 1} parts that fit your printer.</p>
+            <div className="flex gap-2 mt-3">
+              <button className="flex-1 py-2 bg-slate-200 rounded" onClick={() => setSuggestedCuts(null)}>Cancel</button>
+              <button
+                className="flex-1 py-2 bg-emerald-600 text-white rounded"
+                onClick={async () => {
+                  await session.performCutsSequential(suggestedCuts.partId, suggestedCuts.cuts, { count: 4, diameter: 5, length: 20, tolerance: "pla-tight" });
+                  setSuggestedCuts(null);
+                }}
+              >Apply</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
