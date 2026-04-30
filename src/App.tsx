@@ -12,6 +12,7 @@ import { ExplodedView } from "./components/ExplodedView";
 import { ExportDialog, type ExportOptions } from "./components/ExportDialog";
 import { HelpOverlay } from "./components/HelpOverlay";
 import { UpdateNotification } from "./components/UpdateNotification";
+import { DownloadPage } from "./pages/DownloadPage";
 import { useKeyboard } from "./hooks/useKeyboard";
 import { useAutoUpdate } from "./hooks/useAutoUpdate";
 import { loadModel } from "./lib/loaders";
@@ -27,6 +28,12 @@ import type { ModelData, CutPlaneSpec, Dowel, TolerancePreset, PartId } from "./
 const isDesktop = import.meta.env.VITE_TARGET !== "web";
 
 export default function App() {
+  // Simple location-based routing — no need for react-router for one secondary page.
+  // CF Pages serves index.html for unknown paths so /download works without server config.
+  if (typeof window !== "undefined" && window.location.pathname === "/download") {
+    return <DownloadPage />;
+  }
+
   const session = useCutSession();
   const [modelInfo, setModelInfo] = useState<ModelData["info"] | null>(null);
   const [error, setError] = useState<string | null>(null);
