@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import * as THREE from "three";
 import type { Dowel, CutPlaneSpec, TolerancePreset, ModelData, PartId, PrinterPreset } from "../types";
 import { runCut } from "../lib/cut/cut-client";
+import { applyAutoOrient } from "../lib/cut/auto-orient";
 import {
   emptySession,
   importPart,
@@ -57,6 +58,9 @@ export function useCutSession() {
         const dps = result.dowelPieces
           .map(firstMeshAndGroup)
           .filter((x): x is { mesh: THREE.Mesh; group: THREE.Group } => !!x);
+        applyAutoOrient(a.mesh);
+        applyAutoOrient(b.mesh);
+        dps.forEach((d) => applyAutoOrient(d.mesh));
         const next = applyCutResult(
           session,
           partId,
