@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { CutPlaneSpec, TolerancePreset, Dowel } from "../types";
 import { TOLERANCE_VALUES } from "../types";
 
@@ -52,6 +52,12 @@ export function CutPanel({ bboxMin, bboxMax, axis, onAxisChange, onPreviewChange
   };
 
   const updatePosition = (v: number) => { setPosition(v); fire(onPreviewChange); };
+
+  // Fire an initial preview so the cyan plane is visible as soon as the panel opens.
+  useEffect(() => {
+    fire(onPreviewChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="bg-white border-r border-slate-200 p-3 w-72 flex flex-col gap-3 text-sm">
