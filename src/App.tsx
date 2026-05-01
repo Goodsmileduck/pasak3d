@@ -373,8 +373,9 @@ export default function App() {
             />
           )}
           {session.busy && (
-            <div className="absolute inset-0 flex items-center justify-center bg-white/60">
-              <Spinner />
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 bg-slate-900/90 text-white text-sm px-3 py-1.5 rounded-full shadow-lg">
+              <Spinner className="w-4 h-4 text-white" />
+              <span>Cutting…</span>
             </div>
           )}
           {(error || session.error) && (
