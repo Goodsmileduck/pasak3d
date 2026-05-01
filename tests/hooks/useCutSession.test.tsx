@@ -73,6 +73,32 @@ describe("useCutSession", () => {
     expect(result.current.partsArray[0].meta.source).toBe("import");
   });
 
+  it("loadModel centers the imported group on XY with bbox.min.z == 0", () => {
+    // Build a mesh whose natural mesh-coords are far from origin (e.g. raw 3MF
+    // file coords). loadModel must center it so the bbox React reads is sane.
+    const group = new THREE.Group();
+    const geom = new THREE.BoxGeometry(10, 10, 10);
+    geom.translate(128, 64, 32); // simulate non-centered mesh data
+    group.add(new THREE.Mesh(geom));
+
+    const { result } = renderHook(() => useCutSession());
+    act(() =>
+      result.current.loadModel({
+        group,
+        info: {
+          filename: "off.stl", format: "stl", fileSize: 1, triCount: 12,
+          bbox: { min: [0, 0, 0], max: [0, 0, 0] },
+          dimensions: { x: 10, y: 10, z: 10 },
+        },
+      }),
+    );
+    const part = result.current.partsArray[0];
+    const bbox = new THREE.Box3().setFromObject(part.group);
+    expect((bbox.min.x + bbox.max.x) / 2).toBeCloseTo(0, 5);
+    expect((bbox.min.y + bbox.max.y) / 2).toBeCloseTo(0, 5);
+    expect(bbox.min.z).toBeCloseTo(0, 5);
+  });
+
   it("performCut adds two children + dowels and hides the parent", async () => {
     vi.mocked(runCut).mockResolvedValue(makeRunCutResult());
     const { result } = renderHook(() => useCutSession());

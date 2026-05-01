@@ -4,6 +4,7 @@ import type { Dowel, CutPlaneSpec, TolerancePreset, ModelData, PartId, PrinterPr
 import { runCut } from "../lib/cut/cut-client";
 import { applyAutoOrient } from "../lib/cut/auto-orient";
 import { autoPlaceCutDowels } from "../lib/cut/auto-place-cut-dowels";
+import { centerOnXY } from "../lib/scene";
 import {
   emptySession,
   importPart,
@@ -37,6 +38,10 @@ export function useCutSession() {
       if ((o as any).isMesh && !mesh) mesh = o as THREE.Mesh;
     });
     if (!mesh) throw new Error("Model has no mesh");
+    // Center the part now so the bbox React reads is in canonical world coords.
+    // (Viewer used to do this in its mount effect, but App.tsx's bbox memo
+    // captured the pre-centering bbox — leaving the cut plane at mesh-local coords.)
+    centerOnXY(data.group);
     const fresh = emptySession();
     const { session: next } = importPart(fresh, mesh, data.group, "Body");
     setHistory([]);

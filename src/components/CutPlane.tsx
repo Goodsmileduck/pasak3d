@@ -15,11 +15,12 @@ export function CutPlane({ plane, bbox }: Props) {
   const { position, quaternion, size } = useMemo(() => {
     const n = new THREE.Vector3(...plane.normal).normalize();
     const center = bbox.getCenter(new THREE.Vector3());
-    const dist = -plane.constant - n.dot(center);
-    const pos = center.clone().add(n.clone().multiplyScalar(-dist));
+    // Closest point on plane (n · p = constant) to the bbox center.
+    const signedDist = n.dot(center) - plane.constant;
+    const pos = center.clone().sub(n.clone().multiplyScalar(signedDist));
     const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
     const sizeVec = bbox.getSize(new THREE.Vector3());
-    const planeSize = Math.max(sizeVec.x, sizeVec.y, sizeVec.z) * 1.2;
+    const planeSize = Math.max(sizeVec.x, sizeVec.y, sizeVec.z) * 1.5;
     return { position: pos, quaternion: q, size: planeSize };
   }, [plane, bbox]);
 
