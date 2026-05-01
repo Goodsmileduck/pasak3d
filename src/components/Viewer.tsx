@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls as DreiOrbitControls } from "@react-three/drei";
 import * as THREE from "three";
@@ -292,6 +292,17 @@ export function Viewer({
   onControlsReady,
 }: ViewerProps) {
   const controlsRef = useRef<OrbitControls | null>(null);
+  // Track controls in state too so AxisCube re-runs its subscribe-effect
+  // once controls actually mount (refs alone don't trigger React re-renders).
+  const [controls, setControls] = useState<OrbitControls | null>(null);
+  const handleControlsReady = useCallback(
+    (c: OrbitControls) => {
+      controlsRef.current = c;
+      setControls(c);
+      onControlsReady?.(c);
+    },
+    [onControlsReady],
+  );
 
   return (
     <div className="relative w-full h-full">
@@ -322,12 +333,13 @@ export function Viewer({
           wireframe={wireframe}
           plateMode={plateMode}
           controlsRef={controlsRef}
-          onControlsReady={onControlsReady}
+          onControlsReady={handleControlsReady}
         />
       </Canvas>
 
-      {/* AxisCube HTML overlay */}
-      <AxisCube controlsRef={controlsRef} isDark={isDark} />
+      {/* AxisCube HTML overlay — uses live controls instance so its subscribe-effect
+          re-runs once controls actually mount (refs alone don't trigger re-renders). */}
+      <AxisCube controlsRef={controlsRef} controls={controls} isDark={isDark} />
     </div>
   );
 }
