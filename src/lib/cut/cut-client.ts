@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import type { CutPlaneSpec, Dowel, TolerancePreset } from "../../types";
 import type { CutWorkerRequest, CutWorkerResponse, SerializedMesh } from "../../workers/cut-worker";
+import { createModelMaterial } from "../loaders/material";
 
 let worker: Worker | null = null;
 let nextReqId = 1;
@@ -72,7 +73,11 @@ function deserialize(s: SerializedMesh): THREE.Group {
   geom.setIndex(new THREE.BufferAttribute(s.indices, 1));
   geom.computeVertexNormals();
   geom.computeBoundingBox();
-  const m = new THREE.Mesh(geom);
+  // Default neutral color — useCutSession overwrites material.color from RuntimePart.meta.color
+  // once the session reducer assigns palette colors to each new part.
+  const m = new THREE.Mesh(geom, createModelMaterial(0xcccccc));
+  m.castShadow = true;
+  m.receiveShadow = true;
   const g = new THREE.Group();
   g.add(m);
   return g;

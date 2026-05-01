@@ -2,7 +2,6 @@ import { useCallback, useState } from "react";
 import * as THREE from "three";
 import type { Dowel, CutPlaneSpec, TolerancePreset, ModelData, PartId, PrinterPreset } from "../types";
 import { runCut } from "../lib/cut/cut-client";
-import { applyAutoOrient } from "../lib/cut/auto-orient";
 import { autoPlaceCutDowels } from "../lib/cut/auto-place-cut-dowels";
 import { centerOnXY } from "../lib/scene";
 import {
@@ -15,6 +14,20 @@ import {
   type Session,
   type RuntimePart,
 } from "../lib/session";
+
+/** Update a part's material color in-place to match its assigned palette color. */
+function syncMeshColor(mesh: THREE.Mesh, color: string): void {
+  const mat = mesh.material;
+  if (mat instanceof THREE.MeshStandardMaterial || mat instanceof THREE.MeshBasicMaterial) {
+    mat.color.set(color);
+  }
+}
+
+function syncSessionColors(s: Session): void {
+  for (const p of s.parts.values()) {
+    if (p.meta.source === "cut") syncMeshColor(p.mesh, p.meta.color);
+  }
+}
 
 export function useCutSession() {
   const [session, setSession] = useState<Session>(emptySession());
@@ -64,9 +77,8 @@ export function useCutSession() {
         const dps = result.dowelPieces
           .map(firstMeshAndGroup)
           .filter((x): x is { mesh: THREE.Mesh; group: THREE.Group } => !!x);
-        applyAutoOrient(a.mesh);
-        applyAutoOrient(b.mesh);
-        dps.forEach((d) => applyAutoOrient(d.mesh));
+        // Parts stay at their natural cut positions (LuBan3D / Bambu Studio convention).
+        // Auto-orient is applied at export time only.
         const next = applyCutResult(
           session,
           partId,
@@ -74,6 +86,7 @@ export function useCutSession() {
           { partA: a, partB: b, dowelPieces: dps },
           target.meta.name,
         );
+        syncSessionColors(next);
         push(next);
       } catch (e: any) {
         setError(e?.message ?? String(e));
@@ -112,9 +125,6 @@ export function useCutSession() {
           const dps = result.dowelPieces
             .map(firstMeshAndGroup)
             .filter((x): x is { mesh: THREE.Mesh; group: THREE.Group } => !!x);
-          applyAutoOrient(a.mesh);
-          applyAutoOrient(b.mesh);
-          dps.forEach((d) => applyAutoOrient(d.mesh));
           working = applyCutResult(
             working,
             target,
@@ -129,6 +139,7 @@ export function useCutSession() {
           const sizeB = new THREE.Box3().setFromObject(partB.group).getSize(new THREE.Vector3()).length();
           target = sizeA >= sizeB ? partA.id : partB.id;
         }
+        syncSessionColors(working);
         push(working);
       } catch (e: any) {
         setError(e?.message ?? String(e));

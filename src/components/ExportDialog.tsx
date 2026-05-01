@@ -5,6 +5,7 @@ export type ExportFormat = "zip-stl" | "3mf";
 export type ExportOptions = {
   format: ExportFormat;
   includeDowels: boolean;
+  autoOrient: boolean;
   filename: string;
 };
 
@@ -17,6 +18,7 @@ type Props = {
 export function ExportDialog({ defaultFilename, onCancel, onConfirm }: Props) {
   const [format, setFormat] = useState<ExportFormat>("zip-stl");
   const [includeDowels, setIncludeDowels] = useState(true);
+  const [autoOrient, setAutoOrient] = useState(true);
   const [filename, setFilename] = useState(defaultFilename);
 
   return (
@@ -42,6 +44,14 @@ export function ExportDialog({ defaultFilename, onCancel, onConfirm }: Props) {
           />
           Include dowels
         </label>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={autoOrient}
+            onChange={(e) => setAutoOrient(e.target.checked)}
+          />
+          Auto-orient parts for printing
+        </label>
         <label className="block">
           <span className="text-sm">Filename</span>
           <input
@@ -54,7 +64,7 @@ export function ExportDialog({ defaultFilename, onCancel, onConfirm }: Props) {
           <button className="flex-1 py-2 bg-slate-200 rounded text-sm" onClick={onCancel}>Cancel</button>
           <button
             className="flex-1 py-2 bg-emerald-600 text-white rounded text-sm"
-            onClick={() => onConfirm({ format, includeDowels, filename })}
+            onClick={() => onConfirm({ format, includeDowels, autoOrient, filename })}
           >Export</button>
         </div>
       </div>

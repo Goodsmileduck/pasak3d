@@ -21,6 +21,7 @@ import { buildZipExport } from "./lib/exporters/zip-export";
 import { exportToMulti3MF } from "./lib/exporters/3mf";
 import { saveBytes } from "./lib/exporters/save";
 import { suggestCuts } from "./lib/cut/fit-to-printer";
+import { applyAutoOrient } from "./lib/cut/auto-orient";
 import { fitsInPrinter, dimensionsFromBBox } from "./lib/printer-presets";
 import { isDesktop, basename } from "./lib/platform";
 import type { ModelData, CutPlaneSpec, Dowel, TolerancePreset, PartId } from "./types";
@@ -155,14 +156,23 @@ export default function App() {
     const parts = exportableParts.filter((p) => !p.isDowel);
     const dowels = opts.includeDowels ? exportableParts.filter((p) => p.isDowel) : [];
 
+    // When auto-orient is on, we clone each mesh and bake an orient transform
+    // so the source mesh in the scene stays in its natural cut position.
+    const exportMesh = (m: THREE.Mesh): THREE.Mesh => {
+      if (!opts.autoOrient) return m;
+      const cloned = new THREE.Mesh(m.geometry.clone(), m.material);
+      applyAutoOrient(cloned);
+      return cloned;
+    };
+
     const baseName = opts.filename.replace(/\.(zip|3mf)$/i, "");
     let bytes: Uint8Array;
     let downloadName: string;
     let mime: string;
     if (opts.format === "3mf") {
       const items = [
-        ...parts.map((p) => ({ name: p.meta.name, mesh: p.mesh })),
-        ...dowels.map((p) => ({ name: p.meta.name, mesh: p.mesh })),
+        ...parts.map((p) => ({ name: p.meta.name, mesh: exportMesh(p.mesh) })),
+        ...dowels.map((p) => ({ name: p.meta.name, mesh: exportMesh(p.mesh) })),
       ];
       bytes = exportToMulti3MF(items);
       downloadName = `${baseName}.3mf`;
@@ -170,11 +180,11 @@ export default function App() {
     } else {
       const zipParts = parts.map((p) => ({
         name: `${p.meta.name.replace(/\s+/g, "_")}.stl`,
-        mesh: p.mesh,
+        mesh: exportMesh(p.mesh),
       }));
       const zipDowels = dowels.map((p, i) => ({
         name: `dowel_${String(i + 1).padStart(2, "0")}.stl`,
-        mesh: p.mesh,
+        mesh: exportMesh(p.mesh),
       }));
       bytes = buildZipExport(zipParts, zipDowels);
       downloadName = `${baseName}.zip`;

@@ -11,7 +11,7 @@ describe("ExportDialog", () => {
     expect(screen.getByDisplayValue("cube-pasak")).toBeInTheDocument();
   });
 
-  it("defaults to zip-stl format and includeDowels=true", async () => {
+  it("defaults to zip-stl, includeDowels=true, autoOrient=true", async () => {
     const onConfirm = vi.fn();
     render(
       <ExportDialog defaultFilename="x" onCancel={vi.fn()} onConfirm={onConfirm} />,
@@ -20,8 +20,20 @@ describe("ExportDialog", () => {
     expect(onConfirm).toHaveBeenCalledWith({
       format: "zip-stl",
       includeDowels: true,
+      autoOrient: true,
       filename: "x",
     });
+  });
+
+  it("emits autoOrient=false when the checkbox is unticked", async () => {
+    const user = userEvent.setup();
+    const onConfirm = vi.fn();
+    render(
+      <ExportDialog defaultFilename="x" onCancel={vi.fn()} onConfirm={onConfirm} />,
+    );
+    await user.click(screen.getByLabelText(/auto-orient/i));
+    await user.click(screen.getByRole("button", { name: /^export$/i }));
+    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({ autoOrient: false }));
   });
 
   it("emits the chosen format when changed to 3mf", async () => {
@@ -41,7 +53,7 @@ describe("ExportDialog", () => {
     render(
       <ExportDialog defaultFilename="x" onCancel={vi.fn()} onConfirm={onConfirm} />,
     );
-    await user.click(screen.getByRole("checkbox"));
+    await user.click(screen.getByLabelText(/include dowels/i));
     await user.click(screen.getByRole("button", { name: /^export$/i }));
     expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({ includeDowels: false }));
   });
