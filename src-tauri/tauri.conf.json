@@ -50,7 +50,7 @@
       "endpoints": [
         "https://github.com/Goodsmileduck/pasak3d/releases/latest/download/latest.json"
       ],
-      "pubkey": "REPLACE_WITH_PASAK_PUBKEY_FROM_PREFLIGHT",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMwQkIyNjVGMTEyMEExNDUKUldSRm9TQVJYeWE3d09DemZKNTBYK1Fld0o4S3FRS0VSWGMvV3gwYmNhZUswZFVlcVVNa0JQa3EK",
       "windows": {
         "installMode": "passive"
       }
