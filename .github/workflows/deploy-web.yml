@@ -41,6 +41,17 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
+      - name: Ensure Cloudflare Pages project exists
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          npx -y wrangler@4 pages project create pasak --production-branch=main 2>&1 \
+            | tee /tmp/cf-create.log || true
+          if grep -q "already exists\|409" /tmp/cf-create.log; then
+            echo "Project pasak already exists — continuing."
+          fi
+
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
