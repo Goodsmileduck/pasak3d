@@ -118,13 +118,27 @@ export default function App() {
     return b;
   }, [activePart]);
 
+  /**
+   * Cap dowel length to the part's extent along the cut normal so the cylinder
+   * never sticks out past the body. We use 70% of the extent as a safety margin.
+   */
+  const safeDowelLength = (plane: CutPlaneSpec, requested: number): number => {
+    if (!activePart) return requested;
+    const partBbox = new THREE.Box3().setFromObject(activePart.group);
+    const size = partBbox.getSize(new THREE.Vector3());
+    const axisExtent =
+      plane.axisSnap === "x" ? size.x : plane.axisSnap === "y" ? size.y : size.z;
+    return Math.min(requested, axisExtent * 0.7);
+  };
+
   const onPreview = (plane: CutPlaneSpec, dowelsHint: Dowel[], _t: TolerancePreset) => {
     if (!activePart) return;
     setPreviewPlane(plane);
+    const length = safeDowelLength(plane, dowelsHint[0]?.length ?? 20);
     const placed = autoPlaceCutDowels(activePart.mesh, plane, {
       count: dowelsHint.length,
       dowelDiameter: dowelsHint[0]?.diameter ?? 5,
-      length: dowelsHint[0]?.length ?? 20,
+      length,
       minSpacing: 2,
     });
     setPreviewDowels(placed);
@@ -132,10 +146,11 @@ export default function App() {
 
   const onCut = (plane: CutPlaneSpec, dowelsHint: Dowel[], tolerance: TolerancePreset) => {
     if (!activePart) return;
+    const length = safeDowelLength(plane, dowelsHint[0]?.length ?? 20);
     const placed = autoPlaceCutDowels(activePart.mesh, plane, {
       count: dowelsHint.length,
       dowelDiameter: dowelsHint[0]?.diameter ?? 5,
-      length: dowelsHint[0]?.length ?? 20,
+      length,
       minSpacing: 2,
     });
     void session.performCut(activePart.id, plane, placed, tolerance);

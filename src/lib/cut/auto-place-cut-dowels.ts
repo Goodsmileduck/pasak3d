@@ -29,12 +29,14 @@ export function autoPlaceCutDowels(
   const polys = extractCutPolygon(mesh, threePlane);
   if (polys.length === 0) return [];
 
-  // Use the largest polygon (by vertex count) as the outer boundary
+  // Use only the largest polygon as the placement boundary. Smaller loops
+  // returned by the polygon stitcher are usually disconnected regions
+  // (e.g., the wings of a figurine intersecting the plane), not real holes —
+  // treating them as holes would falsely shrink the valid placement area.
   const sorted = [...polys].sort((a, b) => b.length - a.length);
   const outer = sorted[0];
-  const holes = sorted.slice(1);
 
-  const places2D = autoPlaceDowels([outer, ...holes], {
+  const places2D = autoPlaceDowels([outer], {
     count: opts.count,
     dowelDiameter: opts.dowelDiameter,
     minSpacing: opts.minSpacing,
