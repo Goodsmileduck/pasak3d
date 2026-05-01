@@ -14,6 +14,11 @@ export function extractCutPolygon(
   const pos = geom.attributes.position.array as Float32Array;
   const idx = geom.index?.array as Uint32Array | undefined;
 
+  // The plane is in WORLD space; vertices on the geometry are mesh-local.
+  // Transform each vertex through the mesh's world matrix before testing.
+  mesh.updateWorldMatrix(true, false);
+  const matrixWorld = mesh.matrixWorld;
+
   const triCount = idx ? idx.length / 3 : pos.length / 9;
   const segments: Array<[THREE.Vector3, THREE.Vector3]> = [];
 
@@ -25,9 +30,9 @@ export function extractCutPolygon(
     const ia = idx ? idx[t * 3] : t * 3;
     const ib = idx ? idx[t * 3 + 1] : t * 3 + 1;
     const ic = idx ? idx[t * 3 + 2] : t * 3 + 2;
-    v0.fromArray(pos, ia * 3);
-    v1.fromArray(pos, ib * 3);
-    v2.fromArray(pos, ic * 3);
+    v0.fromArray(pos, ia * 3).applyMatrix4(matrixWorld);
+    v1.fromArray(pos, ib * 3).applyMatrix4(matrixWorld);
+    v2.fromArray(pos, ic * 3).applyMatrix4(matrixWorld);
     const seg = triPlaneSegment(v0, v1, v2, plane);
     if (seg) segments.push(seg);
   }
