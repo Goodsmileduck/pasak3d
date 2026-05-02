@@ -37,7 +37,7 @@ export function PartsTree({ parts, selectedId, onSelect, onToggleVisible }: Prop
   };
 
   return (
-    <div className="bg-white border-r border-slate-200 w-56 flex flex-col text-sm">
+    <div className="bg-white border-r border-slate-200 w-56 shrink-0 flex flex-col text-sm">
       <div className="px-2 py-1 font-semibold border-b border-slate-100">Parts</div>
       <div className="flex-1 overflow-auto">{roots.map((r) => renderNode(r))}</div>
       {dowels.length > 0 && (

@@ -60,7 +60,7 @@ export function CutPanel({ bboxMin, bboxMax, axis, onAxisChange, onPreviewChange
   }, []);
 
   return (
-    <div className="bg-white border-r border-slate-200 p-3 w-72 flex flex-col gap-3 text-sm">
+    <div className="bg-white border-r border-slate-200 p-3 w-72 shrink-0 flex flex-col gap-3 text-sm">
       <div>
         <div className="font-semibold mb-1">Cut Axis</div>
         <div className="flex gap-1">
@@ -86,6 +86,9 @@ export function CutPanel({ bboxMin, bboxMax, axis, onAxisChange, onPreviewChange
         <input type="number" min={2} max={20} step={0.5} value={dowelDiameter} onChange={(e) => { setDowelDiameter(+e.target.value); fire(onPreviewChange); }} className="w-full border border-slate-300 rounded px-2 py-1" />
         <label className="block text-xs mt-2">Length (mm)</label>
         <input type="number" min={5} max={100} value={dowelLength} onChange={(e) => { setDowelLength(+e.target.value); fire(onPreviewChange); }} className="w-full border border-slate-300 rounded px-2 py-1" />
+        <p className="text-[11px] text-slate-500 mt-2 leading-snug">
+          Click the cut plane to add a dowel · drag to move · × to remove
+        </p>
       </div>
       <div>
         <label className="block font-semibold mb-1">Tolerance</label>
