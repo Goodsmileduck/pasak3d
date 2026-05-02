@@ -141,19 +141,40 @@ export default function App() {
       length,
       minSpacing: 2,
     });
-    setPreviewDowels(placed);
+    // Replace auto dowels but preserve user-added manual ones.
+    setPreviewDowels((prev) => [
+      ...placed,
+      ...prev.filter((d) => d.source === "manual"),
+    ]);
   };
 
-  const onCut = (plane: CutPlaneSpec, dowelsHint: Dowel[], tolerance: TolerancePreset) => {
+  const onPlaneClick = (point: THREE.Vector3) => {
+    if (!previewPlane || !activePart) return;
+    // Re-use diameter/length from current auto dowels so manual matches the rest.
+    const sample = previewDowels[0];
+    const length = safeDowelLength(previewPlane, sample?.length ?? 20);
+    setPreviewDowels((prev) => [
+      ...prev,
+      {
+        id: `manual_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        position: [point.x, point.y, point.z],
+        axis: previewPlane.normal,
+        diameter: sample?.diameter ?? 5,
+        length,
+        source: "manual",
+      },
+    ]);
+  };
+
+  const onDeleteDowel = (id: string) => {
+    setPreviewDowels((prev) => prev.filter((d) => d.id !== id));
+  };
+
+  const onCut = (plane: CutPlaneSpec, _dowelsHint: Dowel[], tolerance: TolerancePreset) => {
     if (!activePart) return;
-    const length = safeDowelLength(plane, dowelsHint[0]?.length ?? 20);
-    const placed = autoPlaceCutDowels(activePart.mesh, plane, {
-      count: dowelsHint.length,
-      dowelDiameter: dowelsHint[0]?.diameter ?? 5,
-      length,
-      minSpacing: 2,
-    });
-    void session.performCut(activePart.id, plane, placed, tolerance);
+    // The cut uses whatever is currently in previewDowels — auto + manual,
+    // minus any the user deleted.
+    void session.performCut(activePart.id, plane, previewDowels, tolerance);
     setShowCutPanel(false);
     setPreviewPlane(null);
     setPreviewDowels([]);
@@ -384,6 +405,8 @@ export default function App() {
               cutParts={cutPartsForViewer}
               cutPreview={previewPlane && bbox ? { plane: previewPlane, bbox } : null}
               dowels={previewDowels}
+              onPlaneClick={onPlaneClick}
+              onDeleteDowel={onDeleteDowel}
               explodeFactor={explodeFactor}
             />
           )}

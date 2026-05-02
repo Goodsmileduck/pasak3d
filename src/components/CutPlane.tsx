@@ -5,13 +5,15 @@ import type { CutPlaneSpec } from "../types";
 type Props = {
   plane: CutPlaneSpec;
   bbox: THREE.Box3;
+  /** Called when the user clicks on the plane at a world-space point. */
+  onClick?: (point: THREE.Vector3) => void;
 };
 
 /**
  * Renders a translucent plane visualization at the given cut location.
  * Sized to extend slightly past the part bbox.
  */
-export function CutPlane({ plane, bbox }: Props) {
+export function CutPlane({ plane, bbox, onClick }: Props) {
   const { position, quaternion, size } = useMemo(() => {
     const n = new THREE.Vector3(...plane.normal).normalize();
     const center = bbox.getCenter(new THREE.Vector3());
@@ -26,7 +28,14 @@ export function CutPlane({ plane, bbox }: Props) {
 
   return (
     <group position={position} quaternion={quaternion}>
-      <mesh>
+      <mesh
+        onClick={(e) => {
+          if (!onClick) return;
+          // Only react to a clean click (no drag); R3F sets event.button on click.
+          e.stopPropagation();
+          onClick(e.point);
+        }}
+      >
         <planeGeometry args={[size, size]} />
         <meshBasicMaterial color="#22d3ee" transparent opacity={0.25} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>

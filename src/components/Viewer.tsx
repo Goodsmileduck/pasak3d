@@ -29,6 +29,10 @@ interface ViewerProps {
   cutPreview?: { plane: CutPlaneSpec; bbox: THREE.Box3 } | null;
   /** M2 mode: dowel markers */
   dowels?: Dowel[];
+  /** Click on the cut plane (world-space point). Used to add manual dowels. */
+  onPlaneClick?: (point: THREE.Vector3) => void;
+  /** Click on a dowel marker's "×" button — removes that dowel. */
+  onDeleteDowel?: (id: string) => void;
   /** M3: exploded-view factor 0..1 — moves each part radially outward. */
   explodeFactor?: number;
   isDark?: boolean;
@@ -44,6 +48,8 @@ interface SceneContentsProps {
   cutParts?: CutPartEntry[];
   cutPreview?: { plane: CutPlaneSpec; bbox: THREE.Box3 } | null;
   dowels?: Dowel[];
+  onPlaneClick?: (point: THREE.Vector3) => void;
+  onDeleteDowel?: (id: string) => void;
   explodeFactor: number;
   isDark: boolean;
   wireframe: boolean;
@@ -57,6 +63,8 @@ function SceneContents({
   cutParts,
   cutPreview,
   dowels,
+  onPlaneClick,
+  onDeleteDowel,
   explodeFactor,
   isDark,
   wireframe,
@@ -251,12 +259,12 @@ function SceneContents({
 
       {/* Cut plane preview */}
       {cutPreview && (
-        <CutPlane plane={cutPreview.plane} bbox={cutPreview.bbox} />
+        <CutPlane plane={cutPreview.plane} bbox={cutPreview.bbox} onClick={onPlaneClick} />
       )}
 
       {/* Dowel markers */}
       {dowels && dowels.length > 0 && (
-        <DowelMarkers dowels={dowels} />
+        <DowelMarkers dowels={dowels} onDelete={onDeleteDowel} />
       )}
 
       {/* OrbitControls */}
@@ -285,6 +293,8 @@ export function Viewer({
   cutParts,
   cutPreview,
   dowels,
+  onPlaneClick,
+  onDeleteDowel,
   explodeFactor = 0,
   isDark = false,
   wireframe = false,
@@ -328,6 +338,8 @@ export function Viewer({
           cutParts={cutParts}
           cutPreview={cutPreview}
           dowels={dowels}
+          onPlaneClick={onPlaneClick}
+          onDeleteDowel={onDeleteDowel}
           explodeFactor={explodeFactor}
           isDark={isDark}
           wireframe={wireframe}
