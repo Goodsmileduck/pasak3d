@@ -29,11 +29,11 @@ export function autoPlaceCutDowels(
   const polys = extractCutPolygon(mesh, threePlane);
   if (polys.length === 0) return [];
 
-  // Use only the largest polygon as the placement boundary. Smaller loops
-  // returned by the polygon stitcher are usually disconnected regions
-  // (e.g., the wings of a figurine intersecting the plane), not real holes —
-  // treating them as holes would falsely shrink the valid placement area.
-  const sorted = [...polys].sort((a, b) => b.length - a.length);
+  // Sort polygons by absolute AREA (signed shoelace), not vertex count.
+  // The largest-area polygon is the structural region (e.g., a keycap's
+  // wide base) where dowels actually belong — using vertex count would
+  // pick a complex, tiny region (e.g., the dragon's chest) instead.
+  const sorted = [...polys].sort((a, b) => Math.abs(polygonArea(b)) - Math.abs(polygonArea(a)));
   const outer = sorted[0];
 
   const places2D = autoPlaceDowels([outer], {
@@ -63,4 +63,13 @@ export function autoPlaceCutDowels(
       source: "auto" as const,
     };
   });
+}
+
+/** Signed area of a 2D polygon via the shoelace formula. */
+function polygonArea(poly: Array<[number, number]>): number {
+  let sum = 0;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    sum += (poly[j][0] + poly[i][0]) * (poly[j][1] - poly[i][1]);
+  }
+  return sum / 2;
 }
