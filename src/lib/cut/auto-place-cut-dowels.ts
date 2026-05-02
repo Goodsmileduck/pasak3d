@@ -29,18 +29,33 @@ export function autoPlaceCutDowels(
   const polys = extractCutPolygon(mesh, threePlane);
   if (polys.length === 0) return [];
 
-  // Sort polygons by absolute AREA (signed shoelace), not vertex count.
-  // The largest-area polygon is the structural region (e.g., a keycap's
-  // wide base) where dowels actually belong — using vertex count would
-  // pick a complex, tiny region (e.g., the dragon's chest) instead.
-  const sorted = [...polys].sort((a, b) => Math.abs(polygonArea(b)) - Math.abs(polygonArea(a)));
-  const outer = sorted[0];
+  // For complex models (e.g., a keycap with a dragon on top), the cut produces
+  // multiple disconnected cross-section regions. We distribute dowels across
+  // them proportionally to area so each meaningful region gets at least one
+  // dowel — placing all dowels in just the largest region clusters them in
+  // one corner of the model and leaves other halves under-supported.
+  const withArea = polys.map((p) => ({ poly: p, area: Math.abs(polygonArea(p)) }));
+  const totalArea = withArea.reduce((s, x) => s + x.area, 0) || 1;
+  const sorted = [...withArea].sort((a, b) => b.area - a.area);
 
-  const places2D = autoPlaceDowels([outer], {
-    count: opts.count,
-    dowelDiameter: opts.dowelDiameter,
-    minSpacing: opts.minSpacing,
-  });
+  const places2D: Array<[number, number]> = [];
+  let remaining = opts.count;
+  for (let i = 0; i < sorted.length && remaining > 0; i++) {
+    const { poly, area } = sorted[i];
+    // Proportional share, but always at least 1 dowel per region as long as
+    // some count remains. Last region soaks up any remainder.
+    const share = i === sorted.length - 1
+      ? remaining
+      : Math.max(1, Math.round((opts.count * area) / totalArea));
+    const ask = Math.min(share, remaining);
+    const got = autoPlaceDowels([poly], {
+      count: ask,
+      dowelDiameter: opts.dowelDiameter,
+      minSpacing: opts.minSpacing,
+    });
+    places2D.push(...got);
+    remaining -= got.length;
+  }
 
   // Build local 2D frame: same frame used by extractCutPolygon
   const n = n3.clone();
