@@ -170,6 +170,12 @@ export default function App() {
     setPreviewDowels((prev) => prev.filter((d) => d.id !== id));
   };
 
+  const onMoveDowel = (id: string, point: [number, number, number]) => {
+    setPreviewDowels((prev) =>
+      prev.map((d) => (d.id === id ? { ...d, position: point } : d)),
+    );
+  };
+
   const onCut = (plane: CutPlaneSpec, _dowelsHint: Dowel[], tolerance: TolerancePreset) => {
     if (!activePart) return;
     // The cut uses whatever is currently in previewDowels — auto + manual,
@@ -407,6 +413,7 @@ export default function App() {
               dowels={previewDowels}
               onPlaneClick={onPlaneClick}
               onDeleteDowel={onDeleteDowel}
+              onMoveDowel={onMoveDowel}
               explodeFactor={explodeFactor}
             />
           )}

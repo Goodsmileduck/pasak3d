@@ -33,6 +33,8 @@ interface ViewerProps {
   onPlaneClick?: (point: THREE.Vector3) => void;
   /** Click on a dowel marker's "×" button — removes that dowel. */
   onDeleteDowel?: (id: string) => void;
+  /** Drag a dowel marker — fires continuously with its new world position. */
+  onMoveDowel?: (id: string, point: [number, number, number]) => void;
   /** M3: exploded-view factor 0..1 — moves each part radially outward. */
   explodeFactor?: number;
   isDark?: boolean;
@@ -50,6 +52,7 @@ interface SceneContentsProps {
   dowels?: Dowel[];
   onPlaneClick?: (point: THREE.Vector3) => void;
   onDeleteDowel?: (id: string) => void;
+  onMoveDowel?: (id: string, point: [number, number, number]) => void;
   explodeFactor: number;
   isDark: boolean;
   wireframe: boolean;
@@ -65,6 +68,7 @@ function SceneContents({
   dowels,
   onPlaneClick,
   onDeleteDowel,
+  onMoveDowel,
   explodeFactor,
   isDark,
   wireframe,
@@ -264,7 +268,13 @@ function SceneContents({
 
       {/* Dowel markers */}
       {dowels && dowels.length > 0 && (
-        <DowelMarkers dowels={dowels} onDelete={onDeleteDowel} />
+        <DowelMarkers
+          dowels={dowels}
+          plane={cutPreview?.plane}
+          controlsRef={controlsRef}
+          onDelete={onDeleteDowel}
+          onMove={onMoveDowel}
+        />
       )}
 
       {/* OrbitControls */}
@@ -295,6 +305,7 @@ export function Viewer({
   dowels,
   onPlaneClick,
   onDeleteDowel,
+  onMoveDowel,
   explodeFactor = 0,
   isDark = false,
   wireframe = false,
@@ -340,6 +351,7 @@ export function Viewer({
           dowels={dowels}
           onPlaneClick={onPlaneClick}
           onDeleteDowel={onDeleteDowel}
+          onMoveDowel={onMoveDowel}
           explodeFactor={explodeFactor}
           isDark={isDark}
           wireframe={wireframe}
