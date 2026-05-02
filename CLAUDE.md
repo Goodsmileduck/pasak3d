@@ -53,15 +53,16 @@ src/
       manifold.ts                  Manifold WASM init
       convert.ts                   THREE ↔ Manifold (auto-merges verts)
       plane-cut.ts                 splitByPlane → 2 manifolds
-      cut-polygon.ts               Extract 2D cross-section from mesh+plane
+      cut-polygon.ts               Extract 2D cross-section from mesh+plane (returns N polygons)
       dowel-place.ts               Grid sampling on polygon
-      auto-place-cut-dowels.ts     Wires cut-polygon + dowel-place
+      auto-place-cut-dowels.ts     Distributes dowels across cut polygons by area
       dowel-apply.ts               Subtract holes, build dowel pieces
       auto-orient.ts               Largest-face-down rotation + Z=0 placement
       fit-to-printer.ts            Suggest cuts for build volume
       cut-client.ts                Worker bridge
     session.ts                     Pure session reducer
     printer-presets.ts             Bambu / Prusa / Ender / Voron volumes
+    platform.ts                    isDesktop guard + path helpers
     bvh.ts, model-info.ts, scene.ts, constants.ts
   workers/cut-worker.ts            Manifold ops on a Web Worker
   hooks/                           useCutSession, useViewerControls,
@@ -98,12 +99,16 @@ CF Pages serves index.html for any unknown path, so client-side routing via `win
 - **Tolerance:** Radial clearance per hole. Total play = 2× clearance. Presets: pla-tight (0.10), pla-loose (0.20), petg (0.25), sla (0.05).
 - **Parent parts** stay in tree (hidden) after a cut for clean undo/redo.
 - **Auto-orient** runs after every cut so the largest flat face lands on Z=0.
+- **Dowel `source`:** `"auto"` (amber marker) vs `"manual"` (purple marker). Auto dowels are recomputed every time the cut plane preview updates; manual dowels survive across previews. The cut consumes whatever is in `previewDowels` at confirm time.
+- **Multi-region cuts:** A cut can produce several disjoint cross-section polygons (e.g. a keycap with a dragon on top). Auto-placement distributes dowels across regions proportionally to area, with at least one dowel per region while count remains. See `auto-place-cut-dowels.ts`.
+- **Dowel length safety:** Length is capped to 70 % of the part's extent along the cut normal so cylinders never poke through the body (`safeDowelLength` in `App.tsx`).
+- **Manual placement UX:** `CutPlane`'s onClick fires a world-space point → App appends a `manual` dowel. `DowelMarkers` registers window-level `pointermove` / `pointerup` on drag, projects the cursor ray onto the cut plane, and disables `OrbitControls` for the duration so the camera doesn't also orbit.
 
 ## Manifold API Quirks (discovered during M2)
 
 - The actual API is `manifold.splitByPlane(normal, constant)` returning `[pos, neg]` — NOT `split([n], c)`.
 - `manifold.transform(mat)` takes a column-major **16-element** Mat4, NOT row-major 4×3.
-- `meshToManifold` runs `mergeVertices` first because THREE.BoxGeometry / loader output is non-manifold by default (per-face vertex duplication).
+- `meshToManifold` runs `mergeVertices` first because THREE.BoxGeometry / loader output is non-manifold by default (per-face vertex duplication). It then escalates the weld tolerance through `[1e-4, 1e-3, 1e-2]` until `Manifold.status() === "NoError"` and `!isEmpty()`, throwing a clear "gaps or non-manifold edges" error if no tolerance produces a valid manifold.
 - 128 cylinder facets needed for `toBeCloseTo(expected, 0)` precision in volume tests.
 - fflate's `instanceof u8` check rejects jsdom-realm Uint8Arrays from `strToU8` and `TextEncoder`. Workaround: `new Uint8Array(encoded.buffer, encoded.byteOffset, encoded.byteLength)`.
 
@@ -118,6 +123,10 @@ CF Pages serves index.html for any unknown path, so client-side routing via `win
 npm version patch    # or minor / major
 git push --follow-tags
 ```
+
+## Commit Style
+
+Conventional Commits with a scope: `feat(dowels):`, `fix(cut):`, `chore(m4):`, `docs(...)`, `ci(...)`, `refactor:`. Subject in lowercase, em-dash (`—`) for "what + why" clauses (see `git log`).
 
 ## Auto-Update (Desktop)
 
@@ -149,9 +158,9 @@ Tauri updater plugin checks GitHub Releases for new versions on app startup (3s 
 ## Known Issues / Notes
 
 - **Workers were dropped from loaders** — the parser stack runs synchronously in pure functions. This is a deviation from viewer-3d. Big STL files will briefly block the main thread on import. Cut work IS in a worker.
-- **BuildPlate canvas text still says "3D Lab Viewer"** — cosmetic carry-over from the port. Polish before public launch.
+- **`extractCutPolygon` must apply `mesh.matrixWorld`** to vertices before plane intersection — imported parts are centered via group transforms, so raw geometry coords are wrong. Regression tested.
 - **Cargo.lock** is committed — required for reproducible builds and CI cache key.
 - **GitHub Actions (desktop):** `tauri-apps/tauri-action@action-v0.6.1`, `windows-latest`, triggered by `v*.*.*` tags.
 - **Pages PR previews** require version bump in package.json — otherwise the workflow comments "skipped" instead of deploying.
-- **Web memory:** browsers may OOM on very large meshes. Soft warning toast on import; recommend desktop for big files.
+- **Web memory:** browsers may OOM on very large meshes. Amber toast in `App.tsx` fires on import when `file.size > 100MB` or `triCount > 1M` (web target only — desktop has more headroom). Constants `LARGE_MESH_BYTES` / `LARGE_MESH_TRIS`.
 - **WSL2:** libEGL/MESA warnings on `tauri dev` are harmless (software rendering fallback).

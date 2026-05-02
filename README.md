@@ -7,7 +7,8 @@ Free public alternative to LuBan3D. Works in your browser at [pasak.3dlab.id](ht
 ## Features
 
 - Cut any STL, OBJ, 3MF, or GLB mesh along X / Y / Z axes
-- Auto-place dowels with tolerance presets for PLA, PETG, SLA
+- Auto-place dowels with tolerance presets for PLA, PETG, SLA — distributed across all cross-section regions
+- Manual dowel placement — click the cut plane to add, drag to reposition, × to remove
 - Multi-cut workflow with parts tree and undo / redo
 - Auto-orient parts to your printer's build plate
 - Suggest cuts to fit your printer (Bambu, Prusa, Ender, Voron presets)
