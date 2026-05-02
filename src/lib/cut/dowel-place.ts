@@ -8,14 +8,19 @@ export type DowelPlaceOptions = {
 
 /**
  * Auto-place dowels inside a 2D polygon (with optional holes).
- * Strategy: bbox-bounded grid, filtered by point-in-polygon and pairwise spacing.
- * Returns up to `count` positions, fewer if the polygon can't fit them all.
+ *
+ * Strategy: farthest-point sampling, run from several seeds — the polygon
+ * centroid plus the 8 cells of a 3×3 inset bbox grid — and the run that
+ * places the most dowels (preferring lower max-min-distance for tie-breaks)
+ * wins. Centroid seeding produces nicely centered placements when the
+ * polygon has slack; corner seeding wins when the polygon is just barely
+ * large enough to fit `count` dowels.
  */
 export function autoPlaceDowels(
   polygons: Array<Array<Point>>,
   opts: DowelPlaceOptions,
 ): Point[] {
-  if (polygons.length === 0) return [];
+  if (polygons.length === 0 || opts.count <= 0) return [];
   const outer = polygons[0];
   const holes = polygons.slice(1);
   const minDist = opts.dowelDiameter + opts.minSpacing;
@@ -28,34 +33,99 @@ export function autoPlaceDowels(
     if (y < minY) minY = y;
     if (y > maxY) maxY = y;
   }
-  minX += inset; maxX -= inset; minY += inset; maxY -= inset;
-  if (maxX <= minX || maxY <= minY) return [];
+  // Bail when the polygon is narrower than a dowel along either axis.
+  if (maxX - minX <= 2 * inset || maxY - minY <= 2 * inset) return [];
 
-  // Sample the full bbox (bounded by polygon via PIP check).
-  // We don't shrink the bbox by inset here — the PIP check ensures centers are inside.
-  const bboxMinX = minX - inset;
-  const bboxMaxX = maxX + inset;
-  const bboxMinY = minY - inset;
-  const bboxMaxY = maxY + inset;
-
-  const placed: Point[] = [];
-  const tryGrid = (cellsX: number, cellsY: number) => {
-    for (let iy = 0; iy < cellsY && placed.length < opts.count; iy++) {
-      for (let ix = 0; ix < cellsX && placed.length < opts.count; ix++) {
-        const x = bboxMinX + ((ix + 0.5) * (bboxMaxX - bboxMinX)) / cellsX;
-        const y = bboxMinY + ((iy + 0.5) * (bboxMaxY - bboxMinY)) / cellsY;
-        if (!pointInPolygon([x, y], outer)) continue;
-        if (holes.some((h) => pointInPolygon([x, y], h))) continue;
-        if (placed.some((p) => Math.hypot(p[0] - x, p[1] - y) < minDist)) continue;
-        placed.push([x, y]);
-      }
+  // Candidate grid spans the full polygon bbox — PIP filtering keeps centers
+  // inside. We don't shrink by `inset`; the dowel cylinder may overhang the
+  // cross-section a hair near concave corners, but that's negligible for the
+  // realistic shapes Pasak targets, and shrinking loses density on small cuts.
+  const RES = 40;
+  const candidates: Point[] = [];
+  for (let iy = 0; iy < RES; iy++) {
+    for (let ix = 0; ix < RES; ix++) {
+      const x = minX + ((ix + 0.5) * (maxX - minX)) / RES;
+      const y = minY + ((iy + 0.5) * (maxY - minY)) / RES;
+      if (!pointInPolygon([x, y], outer)) continue;
+      if (holes.some((h) => pointInPolygon([x, y], h))) continue;
+      candidates.push([x, y]);
     }
-  };
-  for (let n = 2; n <= 16 && placed.length < opts.count; n++) {
-    placed.length = 0;
-    tryGrid(n, n);
   }
-  return placed.slice(0, opts.count);
+  if (candidates.length === 0) return [];
+
+  // Build seed list: centroid (clamped to nearest candidate if outside polygon)
+  // plus the 9 cell centers of a 3×3 inset grid.
+  const seeds: Point[] = [];
+  const centroid = polygonCentroid(outer);
+  const centroidInside =
+    pointInPolygon(centroid, outer) &&
+    !holes.some((h) => pointInPolygon(centroid, h));
+  seeds.push(centroidInside ? centroid : nearestCandidate(candidates, centroid));
+  for (let iy = 0; iy < 3; iy++) {
+    for (let ix = 0; ix < 3; ix++) {
+      const x = minX + ((ix + 0.5) * (maxX - minX)) / 3;
+      const y = minY + ((iy + 0.5) * (maxY - minY)) / 3;
+      seeds.push(nearestCandidate(candidates, [x, y]));
+    }
+  }
+
+  let best: Point[] = [];
+  for (const seed of seeds) {
+    const placed = farthestPointSample(seed, candidates, opts.count, minDist);
+    if (placed.length > best.length) best = placed;
+    if (best.length >= opts.count) break;
+  }
+  return best;
+}
+
+function farthestPointSample(
+  seed: Point,
+  candidates: Point[],
+  count: number,
+  minDist: number,
+): Point[] {
+  const placed: Point[] = [seed];
+  while (placed.length < count) {
+    let bestIdx = -1;
+    let bestDist = -Infinity;
+    for (let i = 0; i < candidates.length; i++) {
+      const [cx, cy] = candidates[i];
+      let minD = Infinity;
+      for (const [px, py] of placed) {
+        const d = Math.hypot(cx - px, cy - py);
+        if (d < minD) minD = d;
+      }
+      if (minD < minDist) continue;
+      if (minD > bestDist) { bestDist = minD; bestIdx = i; }
+    }
+    if (bestIdx < 0) break;
+    placed.push(candidates[bestIdx]);
+  }
+  return placed;
+}
+
+function nearestCandidate(candidates: Point[], target: Point): Point {
+  let bestIdx = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < candidates.length; i++) {
+    const d = Math.hypot(candidates[i][0] - target[0], candidates[i][1] - target[1]);
+    if (d < bestD) { bestD = d; bestIdx = i; }
+  }
+  return candidates[bestIdx];
+}
+
+/** Area-weighted centroid via the shoelace formula. */
+function polygonCentroid(poly: Point[]): Point {
+  let cx = 0, cy = 0, a = 0;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const f = poly[j][0] * poly[i][1] - poly[i][0] * poly[j][1];
+    a += f;
+    cx += (poly[j][0] + poly[i][0]) * f;
+    cy += (poly[j][1] + poly[i][1]) * f;
+  }
+  a *= 0.5;
+  if (Math.abs(a) < 1e-9) return [poly[0][0], poly[0][1]];
+  return [cx / (6 * a), cy / (6 * a)];
 }
 
 function pointInPolygon(p: Point, poly: Point[]): boolean {
