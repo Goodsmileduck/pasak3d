@@ -15,4 +15,17 @@ describe("convert", () => {
     expect(bbox.max.x - bbox.min.x).toBeCloseTo(10, 5);
     man.delete();
   });
+
+  it("throws a clear error when the mesh can't be repaired", async () => {
+    const M = await initManifold();
+    // A single triangle is the canonical non-watertight mesh.
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute(
+      "position",
+      new THREE.BufferAttribute(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), 3),
+    );
+    geom.setIndex(new THREE.BufferAttribute(new Uint32Array([0, 1, 2]), 1));
+    const mesh = new THREE.Mesh(geom);
+    expect(() => meshToManifold(M, mesh)).toThrow(/gaps or non-manifold/i);
+  });
 });

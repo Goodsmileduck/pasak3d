@@ -33,10 +33,15 @@ async function loadFileFromPath(path: string, onFile: (f: File) => Promise<void>
   await onFile(new File([data as BlobPart], basename(path)));
 }
 
+/** Web-only: warn the user when imported meshes are big enough that cuts may struggle. */
+const LARGE_MESH_BYTES = 100 * 1024 * 1024;
+const LARGE_MESH_TRIS = 1_000_000;
+
 export default function App() {
   const session = useCutSession();
   const [modelInfo, setModelInfo] = useState<ModelData["info"] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [showCutPanel, setShowCutPanel] = useState(false);
   const [previewPlane, setPreviewPlane] = useState<CutPlaneSpec | null>(null);
   const [previewDowels, setPreviewDowels] = useState<Dowel[]>([]);
@@ -51,12 +56,23 @@ export default function App() {
   const handleFile = useCallback(
     async (file: File) => {
       setError(null);
+      setWarning(null);
       try {
         const buf = await file.arrayBuffer();
         const data = await loadModel(file.name, buf, file.size);
         session.loadModel(data);
         setModelInfo(data.info);
         setShowCutPanel(true);
+        // Browsers can OOM on very large meshes well before Manifold itself fails.
+        // Desktop Tauri has more headroom, so only warn on the web target.
+        if (
+          !isDesktop &&
+          (file.size > LARGE_MESH_BYTES || data.info.triCount > LARGE_MESH_TRIS)
+        ) {
+          setWarning(
+            "Large mesh — cuts may be slow or fail. The desktop version handles big files better.",
+          );
+        }
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : String(e));
       }
@@ -440,6 +456,15 @@ export default function App() {
               <button
                 className="text-xs underline ml-auto"
                 onClick={() => setError(null)}
+              >Dismiss</button>
+            </div>
+          )}
+          {warning && !error && !session.error && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 max-w-md bg-amber-100 text-amber-800 px-4 py-2 rounded shadow flex items-start gap-2">
+              <span className="text-sm">{warning}</span>
+              <button
+                className="text-xs underline ml-auto"
+                onClick={() => setWarning(null)}
               >Dismiss</button>
             </div>
           )}
