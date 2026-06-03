@@ -82,7 +82,8 @@ function SceneContents({
 
   // Background color
   useEffect(() => {
-    scene.background = new THREE.Color(isDark ? 0x1a1a1a : 0xf0f0f0);
+    // Filament paper / warm charcoal — matches the DOM chrome tokens.
+    scene.background = new THREE.Color(isDark ? 0x15130d : 0xf8f6f0);
   }, [isDark, scene]);
 
   // Determine which groups to render in scene
@@ -363,7 +364,7 @@ export function Viewer({
 
       {/* AxisCube HTML overlay — uses live controls instance so its subscribe-effect
           re-runs once controls actually mount (refs alone don't trigger re-renders). */}
-      <AxisCube controlsRef={controlsRef} controls={controls} isDark={isDark} />
+      <AxisCube controlsRef={controlsRef} controls={controls} />
     </div>
   );
 }

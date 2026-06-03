@@ -1,9 +1,179 @@
 @import "tailwindcss";
 
+/* Brand fonts as Tailwind theme tokens so the font-display / font-sans /
+   font-mono utilities resolve to them (and they're emitted as :root vars). */
+@theme {
+  --font-display: 'Space Grotesk', system-ui, sans-serif;
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+/* ============================================================================
+   Pasak — "Filament" (v2) design language.
+   Tokens mirror the 3dlab-apps-design skill's design-language.css: warm paper
+   & ink, molten-orange primary (#EA5816), technical-blue accent (#2B6CFF),
+   Space Grotesk / IBM Plex Sans / IBM Plex Mono. Light/dark via [data-theme].
+   Components consume the semantic CSS vars via Tailwind arbitrary values
+   (e.g. bg-[var(--surface)]), so dark mode flips automatically — no per-class
+   isDark branching in the DOM chrome (isDark stays only for the WebGL scene).
+   Fonts are self-hosted TTF, served from /fonts/ on the CF Pages edge.
+============================================================================ */
+
+/* ---- Self-hosted brand fonts (TTF) ---- */
+@font-face {
+  font-family: 'Space Grotesk';
+  src: url('/fonts/SpaceGrotesk-VariableFont_wght.ttf') format('truetype-variations');
+  font-weight: 300 700; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'IBM Plex Sans';
+  src: url('/fonts/IBMPlexSans-VariableFont_wdth_wght.ttf') format('truetype-variations');
+  font-weight: 100 700; font-stretch: 85% 100%; font-style: normal; font-display: swap;
+}
+@font-face {
+  /* Only weight 400 is rendered (HelpOverlay shortcut keys). */
+  font-family: 'IBM Plex Mono';
+  src: url('/fonts/IBMPlexMono-Regular.ttf') format('truetype');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+
+/* ---- Filament semantic tokens ---- */
+:root {
+  /* warm paper & ink */
+  --bg: #f8f6f0;          /* app background (paper) */
+  --surface: #ffffff;     /* panels, toolbar, cards */
+  --surface-2: #efece2;   /* subtle fills, hover, secondary buttons */
+  --surface-3: #e2dccc;   /* pressed / stronger fill */
+  --border: #e2dccc;
+  --ink: #1b1913;         /* primary text */
+  --ink-muted: #635c4d;   /* secondary text */
+  --ink-faint: #8c8472;   /* tertiary / counts */
+
+  /* molten-orange primary */
+  --primary: #ea5816;
+  --primary-fg: #1b1913;  /* dark ink on bright orange (AA, signage-style) */
+
+  /* technical-blue accent */
+  --accent: #2b6cff;
+  --accent-fg: #ffffff;
+  --accent-tint: color-mix(in oklab, var(--accent) 14%, transparent);
+
+  /* warm semantics */
+  --success: #3a8f5b;
+  --success-tint: color-mix(in oklab, var(--success) 16%, transparent);
+  --warning: #c98a1b;
+  --warning-tint: color-mix(in oklab, var(--warning) 18%, transparent);
+  --danger: #c5412a;
+  --danger-tint: color-mix(in oklab, var(--danger) 16%, transparent);
+
+  /* motif: faint FDM print layer-lines (hero/empty-state backdrops) */
+  --layer-line: #1b19130f;
+
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #15130d;
+  --surface: #1e1b14;
+  --surface-2: #2a261c;
+  --surface-3: #322e22;
+  --border: #322e22;
+  --ink: #f1ede2;
+  --ink-muted: #a49c88;
+  --ink-faint: #7c7460;
+
+  --primary: #f2682b;
+  --primary-fg: #1b1208;
+
+  --accent: #5c8bff;
+  --accent-fg: #0c1733;
+  --accent-tint: color-mix(in oklab, var(--accent) 20%, transparent);
+
+  --success: #5cb07d;
+  --success-tint: color-mix(in oklab, var(--success) 20%, transparent);
+  --warning: #d9a23e;
+  --warning-tint: color-mix(in oklab, var(--warning) 22%, transparent);
+  --danger: #e06a52;
+  --danger-tint: color-mix(in oklab, var(--danger) 22%, transparent);
+
+  --layer-line: #f1ede212;
+
+  color-scheme: dark;
+}
+
 html, body, #root {
   height: 100%;
   margin: 0;
   padding: 0;
   overflow: hidden;
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--ink);
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+  font-weight: 600;
+}
+
+/* ---- Signature motif: faint FDM print layer-lines ---- */
+.layer-lines {
+  background-image: repeating-linear-gradient(
+    0deg, var(--layer-line) 0, var(--layer-line) 1px, transparent 1px, transparent 6px);
+}
+
+/* ---- Shared button recipes (color + states; callers add padding/size) ---- */
+.btn-primary {
+  background: var(--primary);
+  color: var(--primary-fg);
+  font-weight: 500;
+  border-radius: 0.25rem;
+  box-shadow: 0 4px 14px -4px var(--primary); /* the signature molten glow */
+  transition: filter 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+.btn-primary:hover:not(:disabled) { filter: brightness(1.05); }
+.btn-primary:disabled { opacity: 0.5; box-shadow: none; }
+
+.btn-neutral {
+  background: var(--surface-2);
+  color: var(--ink);
+  border-radius: 0.25rem;
+  transition: background-color 0.15s ease;
+}
+.btn-neutral:hover:not(:disabled) { background: var(--surface-3); }
+.btn-neutral:disabled { opacity: 0.4; }
+
+/* ---- Form controls themed to Filament ---- */
+input[type="range"] {
+  appearance: none;
+  background: var(--surface-3);
+  cursor: pointer;
+  border-radius: 2px;
+  height: 4px;
+}
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  background: var(--primary);
+  border-radius: 2px;
+  width: 14px; height: 14px;
+  box-shadow: 0 1px 3px #0003;
+}
+input[type="range"]::-moz-range-thumb {
+  background: var(--primary);
+  border: none; border-radius: 2px;
+  width: 14px; height: 14px;
+}
+input[type="range"]:disabled { opacity: 0.5; }
+input[type="checkbox"] { accent-color: var(--primary); }
+
+input[type="number"], input[type="text"], select {
+  color: var(--ink);
+  background: var(--surface);
+}
+select option { color: var(--ink); background: var(--surface); }
+
+:where(button, a, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }

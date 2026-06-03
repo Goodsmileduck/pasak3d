@@ -103,7 +103,8 @@ describe("PartsTree", () => {
     const { container } = render(
       <PartsTree parts={parts} selectedId="p_root" onSelect={vi.fn()} onToggleVisible={vi.fn()} />,
     );
-    expect(container.querySelector(".bg-blue-100")).toBeInTheDocument();
+    // Selected rows carry the Filament accent-tint background.
+    expect(container.querySelector('[class*="accent-tint"]')).toBeInTheDocument();
   });
 
   it("shows the triangle count", () => {

@@ -23,12 +23,12 @@ export function ExportDialog({ defaultFilename, onCancel, onConfirm }: Props) {
 
   return (
     <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-      <div className="bg-white rounded shadow p-4 w-96 space-y-3">
+      <div className="bg-[var(--surface)] text-[var(--ink)] border border-[var(--border)] rounded shadow-lg p-4 w-96 space-y-3">
         <h3 className="font-semibold">Export</h3>
         <label className="block">
           <span className="text-sm">Format</span>
           <select
-            className="block w-full border border-slate-300 rounded px-2 py-1 mt-1 text-sm"
+            className="block w-full border border-[var(--border)] rounded px-2 py-1 mt-1 text-sm bg-[var(--surface)] text-[var(--ink)]"
             value={format}
             onChange={(e) => setFormat(e.target.value as ExportFormat)}
           >
@@ -55,15 +55,15 @@ export function ExportDialog({ defaultFilename, onCancel, onConfirm }: Props) {
         <label className="block">
           <span className="text-sm">Filename</span>
           <input
-            className="block w-full border border-slate-300 rounded px-2 py-1 mt-1 text-sm"
+            className="block w-full border border-[var(--border)] rounded px-2 py-1 mt-1 text-sm bg-[var(--surface)] text-[var(--ink)]"
             value={filename}
             onChange={(e) => setFilename(e.target.value)}
           />
         </label>
         <div className="flex gap-2 mt-4">
-          <button className="flex-1 py-2 bg-slate-200 rounded text-sm" onClick={onCancel}>Cancel</button>
+          <button className="btn-neutral flex-1 py-2 text-sm" onClick={onCancel}>Cancel</button>
           <button
-            className="flex-1 py-2 bg-emerald-600 text-white rounded text-sm"
+            className="btn-primary flex-1 py-2 text-sm"
             onClick={() => onConfirm({ format, includeDowels, autoOrient, filename })}
           >Export</button>
         </div>

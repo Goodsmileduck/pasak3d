@@ -3,11 +3,10 @@ import { SUPPORTED_EXTENSIONS } from "../lib/loaders";
 
 interface DropZoneProps {
   onFile: (file: File) => void;
-  isDark: boolean;
   children: React.ReactNode;
 }
 
-export function DropZone({ onFile, isDark, children }: DropZoneProps) {
+export function DropZone({ onFile, children }: DropZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const dragCountRef = useRef(0);
 
@@ -75,26 +74,12 @@ export function DropZone({ onFile, isDark, children }: DropZoneProps) {
 
       {/* Drop overlay */}
       {isDragging && (
-        <div
-          className={`absolute inset-0 z-50 flex flex-col items-center justify-center pointer-events-none rounded-sm border-4 border-dashed ${
-            isDark
-              ? "bg-blue-900/60 border-blue-400"
-              : "bg-blue-50/80 border-blue-500"
-          }`}
-        >
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center pointer-events-none rounded-sm border-4 border-dashed bg-[var(--accent-tint)] border-[var(--accent)]">
           <div className="text-4xl mb-3">📂</div>
-          <p
-            className={`text-lg font-semibold ${
-              isDark ? "text-blue-300" : "text-blue-700"
-            }`}
-          >
+          <p className="text-lg font-semibold text-[var(--accent)]">
             Drop STL, OBJ, 3MF, or GLB to begin
           </p>
-          <p
-            className={`text-sm mt-1 ${
-              isDark ? "text-blue-400" : "text-blue-500"
-            }`}
-          >
+          <p className="text-sm mt-1 text-[var(--accent)] opacity-80">
             {SUPPORTED_EXTENSIONS.join(", ")}
           </p>
         </div>

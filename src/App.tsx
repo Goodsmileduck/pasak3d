@@ -14,6 +14,7 @@ import { HelpOverlay } from "./components/HelpOverlay";
 import { UpdateNotification } from "./components/UpdateNotification";
 import { useKeyboard } from "./hooks/useKeyboard";
 import { useAutoUpdate } from "./hooks/useAutoUpdate";
+import { useTheme } from "./hooks/useTheme";
 import { loadModel } from "./lib/loaders";
 import { useCutSession } from "./hooks/useCutSession";
 import { autoPlaceCutDowels } from "./lib/cut/auto-place-cut-dowels";
@@ -52,6 +53,7 @@ export default function App() {
   const [cutAxis, setCutAxis] = useState<"x" | "y" | "z">("x");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const update = useAutoUpdate();
+  const { isDark, toggleTheme } = useTheme();
 
   const handleFile = useCallback(
     async (file: File) => {
@@ -317,7 +319,7 @@ export default function App() {
   );
 
   return (
-    <div className="h-full w-full flex flex-col bg-slate-100">
+    <div className="h-full w-full flex flex-col bg-[var(--bg)] text-[var(--ink)]">
       <input
         ref={fileInputRef}
         type="file"
@@ -337,6 +339,8 @@ export default function App() {
         onRedo={session.redo}
         canUndo={session.canUndo}
         canRedo={session.canRedo}
+        isDark={isDark}
+        onToggleTheme={toggleTheme}
         printerSlot={
           <>
             {hasCutParts && (
@@ -381,8 +385,8 @@ export default function App() {
         )}
         <div className="flex-1 relative">
           {!hasContent ? (
-            <DropZone onFile={handleFile} isDark={false}>
-              <div className="w-full h-full flex flex-col items-center justify-center gap-3 bg-slate-100 text-slate-500">
+            <DropZone onFile={handleFile}>
+              <div className="w-full h-full flex flex-col items-center justify-center gap-3 layer-lines bg-[var(--bg)] text-[var(--ink-muted)]">
                 <svg
                   width="56"
                   height="56"
@@ -402,13 +406,13 @@ export default function App() {
                   Drop an STL, OBJ, 3MF, or GLB file here
                 </p>
                 <button
-                  className="mt-1 px-4 py-2 rounded text-sm font-medium bg-slate-200 hover:bg-slate-300 text-slate-700 transition-colors"
+                  className="btn-primary mt-1 px-4 py-2 text-sm"
                   onClick={() => fileInputRef.current?.click()}
                 >
                   Browse file
                 </button>
                 <button
-                  className="text-xs text-blue-600 hover:underline mt-2"
+                  className="text-xs text-[var(--accent)] hover:underline mt-2"
                   onClick={async () => {
                     try {
                       const res = await fetch("/sample-keycap.3mf");
@@ -431,16 +435,17 @@ export default function App() {
               onDeleteDowel={onDeleteDowel}
               onMoveDowel={onMoveDowel}
               explodeFactor={explodeFactor}
+              isDark={isDark}
             />
           )}
           {session.busy && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 bg-slate-900/90 text-white text-sm px-3 py-1.5 rounded-full shadow-lg">
-              <Spinner className="w-4 h-4 text-white" />
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 bg-[var(--ink)] text-[var(--surface)] text-sm px-3 py-1.5 rounded-full shadow-lg">
+              <Spinner className="w-4 h-4" />
               <span>Cutting…</span>
             </div>
           )}
           {(error || session.error) && (
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 max-w-md bg-red-100 text-red-800 px-4 py-2 rounded shadow flex items-start gap-2">
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 max-w-md bg-[var(--danger-tint)] text-[var(--danger)] border border-[var(--danger)]/30 px-4 py-2 rounded shadow flex items-start gap-2">
               <span className="text-sm">
                 {(() => {
                   const raw = error || session.error || "";
@@ -460,7 +465,7 @@ export default function App() {
             </div>
           )}
           {warning && !error && !session.error && (
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 max-w-md bg-amber-100 text-amber-800 px-4 py-2 rounded shadow flex items-start gap-2">
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 max-w-md bg-[var(--warning-tint)] text-[var(--warning)] border border-[var(--warning)]/30 px-4 py-2 rounded shadow flex items-start gap-2">
               <span className="text-sm">{warning}</span>
               <button
                 className="text-xs underline ml-auto"
@@ -473,7 +478,6 @@ export default function App() {
       {modelInfo && (
         <StatusBar
           info={modelInfo}
-          isDark={false}
           isLoading={false}
           error={null}
           parts={session.partsArray.map((p) => ({ visible: p.meta.visible, isDowel: p.isDowel, group: p.group }))}
@@ -489,16 +493,16 @@ export default function App() {
         />
       )}
       {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
-      <UpdateNotification update={update} isDark={false} />
+      <UpdateNotification update={update} />
       {suggestedCuts && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-          <div className="bg-white rounded shadow p-4 max-w-md">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-[var(--surface)] text-[var(--ink)] border border-[var(--border)] rounded shadow-lg p-4 max-w-md">
             <h3 className="font-semibold">Suggested cuts</h3>
-            <p className="text-sm">Will add {suggestedCuts.cuts.length} cut(s) producing {suggestedCuts.cuts.length + 1} parts that fit your printer.</p>
+            <p className="text-sm text-[var(--ink-muted)]">Will add {suggestedCuts.cuts.length} cut(s) producing {suggestedCuts.cuts.length + 1} parts that fit your printer.</p>
             <div className="flex gap-2 mt-3">
-              <button className="flex-1 py-2 bg-slate-200 rounded" onClick={() => setSuggestedCuts(null)}>Cancel</button>
+              <button className="btn-neutral flex-1 py-2" onClick={() => setSuggestedCuts(null)}>Cancel</button>
               <button
-                className="flex-1 py-2 bg-emerald-600 text-white rounded"
+                className="btn-primary flex-1 py-2"
                 onClick={async () => {
                   await session.performCutsSequential(suggestedCuts.partId, suggestedCuts.cuts, { count: 4, diameter: 5, length: 20, tolerance: "pla-tight" });
                   setSuggestedCuts(null);

@@ -60,14 +60,14 @@ export function CutPanel({ bboxMin, bboxMax, axis, onAxisChange, onPreviewChange
   }, []);
 
   return (
-    <div className="bg-white border-r border-slate-200 p-3 w-72 shrink-0 flex flex-col gap-3 text-sm">
+    <div className="bg-[var(--surface)] text-[var(--ink)] border-r border-[var(--border)] p-3 w-72 shrink-0 flex flex-col gap-3 text-sm">
       <div>
         <div className="font-semibold mb-1">Cut Axis</div>
         <div className="flex gap-1">
           {(["x", "y", "z"] as const).map((a) => (
             <button
               key={a}
-              className={`flex-1 py-1 rounded ${axis === a ? "bg-slate-900 text-white" : "bg-slate-100"}`}
+              className={`flex-1 py-1 rounded transition-colors ${axis === a ? "bg-[var(--ink)] text-[var(--surface)]" : "bg-[var(--surface-2)] text-[var(--ink)] hover:bg-[var(--surface-3)]"}`}
               onClick={() => { onAxisChange(a); fire(onPreviewChange); }}
             >{a.toUpperCase()}</button>
           ))}
@@ -76,31 +76,31 @@ export function CutPanel({ bboxMin, bboxMax, axis, onAxisChange, onPreviewChange
       <div>
         <label className="block font-semibold mb-1">Position (mm)</label>
         <input type="range" min={min} max={max} step={0.1} value={position} onChange={(e) => updatePosition(+e.target.value)} className="w-full" />
-        <input type="number" value={position.toFixed(2)} onChange={(e) => updatePosition(+e.target.value)} className="w-full border border-slate-300 rounded px-2 py-1 mt-1" />
+        <input type="number" value={position.toFixed(2)} onChange={(e) => updatePosition(+e.target.value)} className="w-full border border-[var(--border)] rounded px-2 py-1 mt-1" />
       </div>
-      <div className="border-t border-slate-200 pt-3">
+      <div className="border-t border-[var(--border)] pt-3">
         <div className="font-semibold mb-1">Dowels</div>
         <label className="block text-xs">Count</label>
-        <input type="number" min={0} max={20} value={dowelCount} onChange={(e) => { setDowelCount(+e.target.value); fire(onPreviewChange); }} className="w-full border border-slate-300 rounded px-2 py-1" />
+        <input type="number" min={0} max={20} value={dowelCount} onChange={(e) => { setDowelCount(+e.target.value); fire(onPreviewChange); }} className="w-full border border-[var(--border)] rounded px-2 py-1" />
         <label className="block text-xs mt-2">Diameter (mm)</label>
-        <input type="number" min={2} max={20} step={0.5} value={dowelDiameter} onChange={(e) => { setDowelDiameter(+e.target.value); fire(onPreviewChange); }} className="w-full border border-slate-300 rounded px-2 py-1" />
+        <input type="number" min={2} max={20} step={0.5} value={dowelDiameter} onChange={(e) => { setDowelDiameter(+e.target.value); fire(onPreviewChange); }} className="w-full border border-[var(--border)] rounded px-2 py-1" />
         <label className="block text-xs mt-2">Length (mm)</label>
-        <input type="number" min={5} max={100} value={dowelLength} onChange={(e) => { setDowelLength(+e.target.value); fire(onPreviewChange); }} className="w-full border border-slate-300 rounded px-2 py-1" />
-        <p className="text-[11px] text-slate-500 mt-2 leading-snug">
+        <input type="number" min={5} max={100} value={dowelLength} onChange={(e) => { setDowelLength(+e.target.value); fire(onPreviewChange); }} className="w-full border border-[var(--border)] rounded px-2 py-1" />
+        <p className="text-[11px] text-[var(--ink-muted)] mt-2 leading-snug">
           Click the cut plane to add a dowel · drag to move · × to remove
         </p>
       </div>
       <div>
         <label className="block font-semibold mb-1">Tolerance</label>
-        <select value={tolerance} onChange={(e) => { setTolerance(e.target.value as TolerancePreset); fire(onPreviewChange); }} className="w-full border border-slate-300 rounded px-2 py-1">
+        <select value={tolerance} onChange={(e) => { setTolerance(e.target.value as TolerancePreset); fire(onPreviewChange); }} className="w-full border border-[var(--border)] rounded px-2 py-1">
           {Object.entries(TOLERANCE_VALUES).map(([k, v]) => (
             <option key={k} value={k}>{k} ({v}mm)</option>
           ))}
         </select>
       </div>
       <div className="flex gap-2 mt-auto">
-        <button className="flex-1 py-2 bg-slate-200 rounded" onClick={onCancel} disabled={busy}>Cancel</button>
-        <button className="flex-1 py-2 bg-emerald-600 text-white rounded disabled:opacity-50" onClick={() => fire(onCut)} disabled={busy}>{busy ? "Cutting..." : "Cut"}</button>
+        <button className="btn-neutral flex-1 py-2" onClick={onCancel} disabled={busy}>Cancel</button>
+        <button className="btn-primary flex-1 py-2" onClick={() => fire(onCut)} disabled={busy}>{busy ? "Cutting..." : "Cut"}</button>
       </div>
     </div>
   );

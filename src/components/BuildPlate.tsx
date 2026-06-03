@@ -249,7 +249,7 @@ export function BuildPlate({ mode, isDark, model }: BuildPlateProps) {
     // PEI is a matte plastic — no metalness, moderate roughness
     const roughness = mode === "textured" ? 0.72 : 0.95;
 
-    const ghostColor = isDark ? "#1a1a1a" : "#f0f0f0";
+    const ghostColor = isDark ? "#15130d" : "#f8f6f0";
 
     return (
         <>

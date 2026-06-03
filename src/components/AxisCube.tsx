@@ -9,7 +9,6 @@ function smoothstep(t: number): number {
 interface AxisCubeProps {
   controlsRef: React.RefObject<OrbitControls | null>;
   controls?: OrbitControls | null;
-  isDark: boolean;
   onResetView?: () => void;
 }
 
@@ -277,7 +276,7 @@ export const VIEW_SNAP_MAP: Record<string, Face> = {
   "1": "front", "2": "back", "3": "left", "4": "right", "5": "top", "6": "bottom",
 };
 
-export const AxisCube = forwardRef<AxisCubeRef, AxisCubeProps>(function AxisCube({ controlsRef, controls: controlsProp, isDark, onResetView }, ref) {
+export const AxisCube = forwardRef<AxisCubeRef, AxisCubeProps>(function AxisCube({ controlsRef, controls: controlsProp, onResetView }, ref) {
   const cubeRef = useRef<HTMLDivElement>(null);
   const animRef = useRef<number | null>(null);
   // Shared hover state: tracks the hovered EdgeId or CornerId so all zones
@@ -373,24 +372,21 @@ export const AxisCube = forwardRef<AxisCubeRef, AxisCubeProps>(function AxisCube
   }, [controlsRef, snapToDirection]);
   useImperativeHandle(ref, () => ({ snapToView }), [snapToView]);
 
-  const faceBase = isDark
-    ? "bg-neutral-700/80 hover:bg-blue-600/80 border border-neutral-500/50 text-neutral-200"
-    : "bg-gray-300/80 hover:bg-blue-400/80 border border-gray-400/50 text-gray-700";
+  const faceBase =
+    "bg-[var(--surface-2)]/85 hover:bg-[var(--accent)]/85 border border-[var(--border)] text-[var(--ink)]";
 
   // Returns Tailwind classes for edge/corner zones with shared hover highlight.
-  // All class strings are written as full literals so Tailwind's JIT scanner keeps them.
+  // Token-based (Filament), so the cube follows the theme via CSS vars.
   function getZoneClass(zoneId: string, kind: "edge" | "corner"): string {
     const isHovered = hoveredZone === zoneId;
-    if (isHovered) return isDark ? "bg-blue-600/80" : "bg-blue-400/80";
-    if (kind === "edge") {
-      return isDark
-        ? "bg-neutral-600/80 hover:bg-blue-600/80"
-        : "bg-gray-200/80 hover:bg-blue-400/80";
-    }
-    return isDark
-      ? "bg-neutral-600/70 hover:bg-blue-600/80"
-      : "bg-gray-200/70 hover:bg-blue-400/80";
+    if (isHovered) return "bg-[var(--accent)]/85";
+    if (kind === "edge") return "bg-[var(--surface-3)]/80 hover:bg-[var(--accent)]/85";
+    return "bg-[var(--surface-3)]/70 hover:bg-[var(--accent)]/85";
   }
+
+  // Shared style for the reset-view + flip overlay buttons.
+  const cubeBtn =
+    "w-6 h-6 flex items-center justify-center rounded bg-[var(--surface-2)]/90 hover:bg-[var(--accent)]/85 text-[var(--ink-muted)] cursor-pointer";
 
   return (
     <div className="absolute bottom-4 left-4 select-none" style={{ width: 110 }}>
@@ -398,9 +394,7 @@ export const AxisCube = forwardRef<AxisCubeRef, AxisCubeProps>(function AxisCube
       {onResetView && (
         <button
           onClick={onResetView}
-          className={`w-6 h-6 flex items-center justify-center rounded mb-2
-            ${isDark ? "bg-neutral-700/90 hover:bg-blue-600/80 text-neutral-300" : "bg-gray-300/90 hover:bg-blue-400/80 text-gray-600"}
-            cursor-pointer`}
+          className={`${cubeBtn} mb-2`}
           title="Reset view (F)"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -415,9 +409,7 @@ export const AxisCube = forwardRef<AxisCubeRef, AxisCubeProps>(function AxisCube
         {/* Flip button — bottom-right, z-index keeps it above the 3D cube */}
         <button
           onClick={flipView}
-          className={`absolute w-6 h-6 flex items-center justify-center rounded
-            ${isDark ? "bg-neutral-700/90 hover:bg-blue-600/80 text-neutral-300" : "bg-gray-300/90 hover:bg-blue-400/80 text-gray-600"}
-            cursor-pointer`}
+          className={`${cubeBtn} absolute`}
           style={{ bottom: 0, right: 0, zIndex: 10 }}
           title="Flip to opposite view"
         >

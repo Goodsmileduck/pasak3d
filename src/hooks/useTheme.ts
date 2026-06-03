@@ -3,47 +3,30 @@ import { THEME_STORAGE_KEY } from "../lib/constants";
 
 export type Theme = "light" | "dark" | "system";
 
-function getSystemPreference(): "light" | "dark" {
-  return window.matchMedia("(prefers-color-scheme: dark)").matches
-    ? "dark"
-    : "light";
-}
-
-function resolveTheme(theme: Theme): "light" | "dark" {
-  return theme === "system" ? getSystemPreference() : theme;
-}
-
-
+const SYSTEM_DARK = "(prefers-color-scheme: dark)";
 
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>(() => {
     const stored = localStorage.getItem(THEME_STORAGE_KEY) as Theme | null;
     return stored ?? "system";
   });
+  // Live OS preference, kept in state so a "system"-mode user sees changes immediately.
+  const [systemDark, setSystemDark] = useState(() => window.matchMedia(SYSTEM_DARK).matches);
 
-  const isDark = resolveTheme(theme) === "dark";
+  const isDark = theme === "system" ? systemDark : theme === "dark";
 
-  // Apply dark class to root
+  // Reflect resolved theme onto <html data-theme> so the Filament CSS vars flip.
   useEffect(() => {
-    const root = document.documentElement;
-    if (isDark) {
-      root.classList.add("dark");
-    } else {
-      root.classList.remove("dark");
-    }
+    document.documentElement.setAttribute("data-theme", isDark ? "dark" : "light");
   }, [isDark]);
 
-  // Listen for system preference changes when in "system" mode
+  // Track OS preference changes (only affects the UI while theme === "system").
   useEffect(() => {
-    if (theme !== "system") return;
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const handler = () => {
-      // Re-render by updating a timestamp; isDark is derived on render
-      setThemeState("system");
-    };
+    const mq = window.matchMedia(SYSTEM_DARK);
+    const handler = () => setSystemDark(mq.matches);
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
-  }, [theme]);
+  }, []);
 
   const setTheme = useCallback((t: Theme) => {
     setThemeState(t);
@@ -54,5 +37,6 @@ export function useTheme() {
     setTheme(isDark ? "light" : "dark");
   }, [isDark, setTheme]);
 
-  return { theme, isDark, setTheme, toggleTheme };
+  // setTheme/theme stay internal — only isDark + toggleTheme are consumed today.
+  return { isDark, toggleTheme };
 }

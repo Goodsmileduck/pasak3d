@@ -9,7 +9,7 @@ type Props = {
 export function PrinterPanel({ selected, onChange }: Props) {
   return (
     <select
-      className="border border-slate-300 rounded px-2 py-1 text-sm"
+      className="border border-[var(--border)] rounded px-2 py-1 text-sm bg-[var(--surface)] text-[var(--ink)]"
       value={selected?.id ?? ""}
       onChange={(e) => {
         const id = e.target.value;

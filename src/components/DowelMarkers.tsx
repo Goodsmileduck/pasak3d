@@ -99,7 +99,7 @@ function DraggableDowel({ dowel, plane, controlsRef, onMove, onDelete }: DragPro
       >
         <cylinderGeometry args={[dowel.diameter / 2, dowel.diameter / 2, dowel.length, 24]} />
         <meshBasicMaterial
-          color={dowel.source === "manual" ? "#a855f7" : "#f59e0b"}
+          color={dowel.source === "manual" ? "#2b6cff" : "#ea5816"}
           transparent
           opacity={0.7}
           depthWrite={false}
@@ -107,7 +107,7 @@ function DraggableDowel({ dowel, plane, controlsRef, onMove, onDelete }: DragPro
       </mesh>
       <Html distanceFactor={20} center>
         <button
-          className={`${dowel.source === "manual" ? "bg-purple-600" : "bg-amber-500"} text-white text-[10px] leading-none w-3.5 h-3.5 rounded-full shadow flex items-center justify-center`}
+          className={`${dowel.source === "manual" ? "bg-[var(--accent)]" : "bg-[var(--primary)]"} text-white text-[10px] leading-none w-3.5 h-3.5 rounded-full shadow flex items-center justify-center`}
           onClick={(e) => { e.stopPropagation(); onDelete?.(dowel.id); }}
         >×</button>
       </Html>

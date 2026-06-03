@@ -5,7 +5,7 @@ type Props = {
 
 export function ExplodedView({ value, onChange }: Props) {
   return (
-    <div className="flex items-center gap-2 text-xs text-slate-600">
+    <div className="flex items-center gap-2 text-xs text-[var(--ink-muted)]">
       <span>Explode</span>
       <input
         type="range"

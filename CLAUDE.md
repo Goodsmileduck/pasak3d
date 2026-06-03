@@ -12,6 +12,25 @@ Web + desktop tool to cut large 3D meshes into printable parts joined by separat
 
 All frontend changes must work in both targets. Verify with `npm run build:web` (web) and `npm run build` (desktop) before considering a task done. Platform-specific code is gated by `import.meta.env.VITE_TARGET !== 'web'` (desktop builds do not set `VITE_TARGET`).
 
+## Design System — Filament (v2)
+
+The UI uses the shared **3D Lab Apps "Filament" (v2)** design language (warm paper & ink,
+molten-orange `#EA5816` primary, technical-blue `#2B6CFF` accent, Space Grotesk / IBM Plex
+Sans / IBM Plex Mono). Conventions:
+
+- **Tokens, not raw palette.** Semantic CSS vars live in `src/styles.css` (`--bg`, `--surface`,
+  `--surface-2/3`, `--border`, `--ink`, `--ink-muted/faint`, `--primary`, `--accent`,
+  `--success`/`--warning`/`--danger` + `-tint`s). DOM chrome consumes them via Tailwind
+  arbitrary values, e.g. `bg-[var(--surface)]`. Do **not** introduce `bg-slate-*` / `text-blue-*`.
+- **Light/dark via `[data-theme]`** on `<html>` — flips the vars automatically, so DOM
+  components carry no `isDark` branches. `useTheme` (key `pasak-theme`, supports `system`)
+  owns it; an inline script in `index.html` sets `data-theme` before paint to avoid flash.
+- **`isDark` is for the WebGL scene only** — `Viewer` (scene background) and `BuildPlate`
+  (canvas textures) still take it, since they can't read CSS vars. Scene bg matches the
+  paper/charcoal tokens (`0xf8f6f0` / `0x15130d`).
+- **Fonts** are self-hosted TTF in `public/fonts/` (served from the CF Pages edge).
+- Primary CTAs (Open→ink, Export/Cut/Download→molten orange) use dark ink on orange.
+
 ## Key Commands
 
 ```bash

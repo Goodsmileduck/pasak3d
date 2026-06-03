@@ -6,6 +6,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Pasak — Cut 3D models with dowel connections</title>
     <meta name="description" content="Free web tool to cut large 3D models into printable parts joined by dowels. Alternative to LuBan3D." />
+    <script>
+      // Resolve theme before first paint to avoid a flash (matches useTheme + styles.css).
+      (function () {
+        try {
+          var stored = localStorage.getItem("pasak-theme");
+          var dark =
+            stored === "dark" ||
+            ((!stored || stored === "system") &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+      })();
+    </script>
+    <style>
+      html { background: #f8f6f0; }
+      html[data-theme="dark"] { background: #15130d; }
+    </style>
   </head>
   <body>
     <div id="root"></div>
