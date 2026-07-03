@@ -1,0 +1,874 @@
+# Pasak Phase 1 — Joint System Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Generalize Pasak's dowel code into a full web-tier keyed-joint system (shapes + polarity + taper + magnet sockets), add a test-fit coupon generator, and complete separate-components / cap verification / seam labels — all on `manifold-3d` WASM, keeping the client-side web build fully functional.
+
+**Architecture:** New geometry under `src/lib/cut/joints/` called from the existing `cut-worker.ts`. The `Dowel` type becomes a superset `Joint` (back-compat alias) so the session reducer, worker protocol, and UI keep working with defaults. No native/Tauri work — Phase 2.
+
+**Tech Stack:** TypeScript, React 19, Three.js 0.170.0, `manifold-3d@3.4.1` (WASM), Vitest, Vite (dual `web`/desktop targets via `VITE_TARGET`).
+
+**Spec:** [`../specs/2026-07-02-pasak-phase1-joints-design.md`](../specs/2026-07-02-pasak-phase1-joints-design.md)
+
+## Global Constraints
+
+- **Web must stay 100% client-side.** All Phase 1 geometry runs on `manifold-3d` WASM in the worker. No native calls, no `src-tauri/` changes.
+- **Both build targets must pass** before a milestone is done: `npm run build:web` (web) AND `npm run build` (desktop). Also `npm run test` and `npm run typecheck`.
+- **Back-compat is mandatory.** Existing `Dowel` data and existing `tests/cut/dowel-*.test.ts` must pass unchanged; missing `shape`/`polarity` ⇒ current cylinder behavior.
+- **Clearance semantics unchanged:** hole radius = solid + radial clearance on BOTH halves (total play = 2×). Per-joint `clearance` overrides the `TolerancePreset` map value; default preset behavior identical to today.
+- **Manifold memory discipline:** every intermediate `Manifold`/`CrossSection` gets `.delete()`. `setCircularSegments` set once at worker init.
+- **Non-manifold guard:** composite cutters (cross/puzzle) must OVERLAP primitives before union (never union merely-touching faces). Validate `status() === 'NoError'` after each composite build.
+- **Commit style:** Conventional Commits with scope, em-dash for what+why, e.g. `feat(joints): …`. End commit messages with `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`.
+- **Naming:** `Cut.dowels` field name is KEPT this phase (not renamed to `joints`).
+- **Confirmed manifold-3d@3.4.1 API** (verified in `node_modules/manifold-3d/manifold.d.ts`):
+  `Manifold.cube(size?, center?)`, `Manifold.cylinder(height, rLow, rHigh?, segs?, center?)`,
+  `Manifold.sphere(r, segs?)`, `Manifold.extrude(poly, height, nDiv?, twist?, scaleTop?, center?)`,
+  `CrossSection.ofPolygons(contours, fillRule?)`, `CrossSection.circle(r, segs?)`,
+  `CrossSection.square(size?, center?)`, `cs.offset(delta, joinType?, miterLimit?, segs?)`,
+  `cs.extrude(height, nDiv?, twist?, scaleTop?, center?)`, `m.add(o)`, `m.subtract(o)`,
+  `m.transform(mat)` (column-major), `m.decompose(): Manifold[]`, `m.status()`, `m.isEmpty()`, `m.volume()`,
+  `setCircularSegments(n)`.
+
+---
+
+## Milestone execution protocol
+
+Work milestones in order. After **each** milestone: run `npm run test`, `npm run typecheck`, `npm run build:web`, `npm run build`; write `docs/mN-<name>-smoke-test.md` in the style of existing `docs/m*-smoke-test.md`; then **STOP for user review**. M2, M3a, M3b task steps are outlined with locked interfaces here and expanded into full TDD detail (like M1 below) at the start of each, once the prior milestone is reviewed — their concrete code depends on M1's as-built signatures.
+
+---
+
+# MILESTONE 1 — Joint system overhaul
+
+Deliverable: all five joint shapes + magnet socket, applied through the worker, selectable in the UI, with existing dowel behavior preserved as the default.
+
+## File structure (M1)
+
+- Create `src/lib/cut/joints/orient.ts` — shared `rotationMat4FromTo` + `placeSolid` (extracted from `dowel-apply.ts`).
+- Create `src/lib/cut/joints/shapes.ts` — `buildJointSolid` factory (nominal + female cutter per shape).
+- Create `src/lib/cut/joints/apply.ts` — `applyJoints` (replaces `applyDowels`; magnet-aware).
+- Modify `src/types/index.ts` — `Joint`, `JointShape`, `JointPolarity`, `Dowel` alias, `resolveClearance`.
+- Modify `src/lib/cut/dowel-apply.ts` — re-export from `joints/` for back-compat, or delete once callers migrate (Task 9).
+- Modify `src/workers/cut-worker.ts` — call `applyJoints`, `setCircularSegments` once.
+- Modify `src/components/CutPanel.tsx` + `src/components/DowelMarkers.tsx` — shape + polarity picker.
+- Tests: `tests/cut/joints/{shapes,apply,magnet,orient}.test.ts`.
+
+---
+
+### Task 1: Joint type model
+
+**Files:**
+- Modify: `src/types/index.ts`
+- Test: `tests/types-joint.test.ts` (create)
+
+**Interfaces:**
+- Produces: `JointShape`, `JointPolarity`, `Joint`, `Dowel` (= `Joint`), `resolveClearance(joint, preset): number`.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/types-joint.test.ts
+import { describe, it, expect } from "vitest";
+import { resolveClearance, TOLERANCE_VALUES, type Joint } from "../src/types";
+
+describe("Joint type + resolveClearance", () => {
+  const base: Joint = {
+    id: "j1", position: [0, 0, 0], axis: [0, 0, 1],
+    diameter: 5, length: 20, source: "auto",
+  };
+
+  it("defaults clearance to the preset value when no override", () => {
+    expect(resolveClearance(base, "pla-tight")).toBe(TOLERANCE_VALUES["pla-tight"]);
+  });
+
+  it("uses the per-joint clearance override when present", () => {
+    expect(resolveClearance({ ...base, clearance: 0.33 }, "pla-tight")).toBe(0.33);
+  });
+
+  it("treats a legacy dowel (no shape/polarity) as a cylinder separate-peg", () => {
+    // Type-level: assignable without shape/polarity; runtime defaults live in shapes/apply.
+    const legacy: Joint = base;
+    expect(legacy.shape ?? "cylinder").toBe("cylinder");
+    expect(legacy.polarity ?? "separate-peg").toBe("separate-peg");
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run tests/types-joint.test.ts`
+Expected: FAIL — `resolveClearance` is not exported.
+
+- [ ] **Step 3: Implement the types + helper**
+
+In `src/types/index.ts`, replace the `Dowel` type block with:
+
+```ts
+export type JointShape = "cylinder" | "cube" | "cross" | "dovetail" | "puzzle";
+export type JointPolarity = "separate-peg" | "male" | "female" | "magnet";
+
+/**
+ * A joint placed on a cut seam. Superset of the former `Dowel`.
+ * Missing `shape`/`polarity` ⇒ legacy cylinder + separate-peg behavior.
+ */
+export type Joint = {
+  id: string;
+  position: [number, number, number]; // world-space, on the cut plane
+  axis: [number, number, number];     // unit normal of the cut plane
+  diameter: number;                    // mm (nominal; drives radius / box size)
+  length: number;                      // mm
+  source: "auto" | "manual";
+  shape?: JointShape;                  // default "cylinder"
+  polarity?: JointPolarity;            // default "separate-peg"
+  taper?: number;                      // 0..1 draft (0 = straight)
+  clearance?: number;                  // per-joint radial clearance override (mm)
+};
+
+/** Back-compat alias — existing code referencing `Dowel` keeps working. */
+export type Dowel = Joint;
+
+/** Radial clearance for a joint: per-joint override, else the tolerance preset. */
+export function resolveClearance(joint: Joint, preset: TolerancePreset): number {
+  return joint.clearance ?? TOLERANCE_VALUES[preset];
+}
+```
+
+Keep the existing `TolerancePreset` and `TOLERANCE_VALUES` exactly as they are (defined above this block). Update `Cut.dowels` type to `Joint[]` (field name unchanged).
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx vitest run tests/types-joint.test.ts`
+Expected: PASS.
+
+- [ ] **Step 5: Verify no type regressions**
+
+Run: `npm run typecheck`
+Expected: PASS (all `Dowel` references resolve via the alias).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/types/index.ts tests/types-joint.test.ts
+git commit -m "feat(joints): Joint type as a Dowel superset — shape/polarity/taper/clearance"
+```
+
+---
+
+### Task 2: Extract orientation helper
+
+**Files:**
+- Create: `src/lib/cut/joints/orient.ts`
+- Modify: `src/lib/cut/dowel-apply.ts:40-121` (import from `orient.ts` instead of local defs)
+- Test: `tests/cut/joints/orient.test.ts` (create)
+
+**Interfaces:**
+- Produces: `rotationMat4FromTo(from, to): number[]` and `placeSolid(solid, position, axis): Manifold` (rotates local +Z to `axis`, translates to `position`).
+- Consumes: nothing new.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/cut/joints/orient.test.ts
+import { describe, it, expect } from "vitest";
+import { rotationMat4FromTo } from "../../../src/lib/cut/joints/orient";
+
+describe("rotationMat4FromTo", () => {
+  it("returns identity (col-major) when from==to", () => {
+    expect(rotationMat4FromTo([0, 0, 1], [0, 0, 1])).toEqual(
+      [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    );
+  });
+
+  it("rotates +Z to +X (column-major: col0 becomes +Z image)", () => {
+    const m = rotationMat4FromTo([0, 0, 1], [1, 0, 0]);
+    // +Z maps to +X: applying rotation to (0,0,1) yields (1,0,0).
+    // Column-major cols: [col0(0..3), col1, col2, col3]. z-axis image = col2 = m[8..10].
+    expect(m[8]).toBeCloseTo(1, 5);  // x-component of rotated +Z
+    expect(m[9]).toBeCloseTo(0, 5);
+    expect(m[10]).toBeCloseTo(0, 5);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run tests/cut/joints/orient.test.ts`
+Expected: FAIL — module `orient.ts` does not exist.
+
+- [ ] **Step 3: Create `orient.ts`**
+
+Move `rotationMat4FromTo`, `normalize`, `cross` from `dowel-apply.ts` into `src/lib/cut/joints/orient.ts` verbatim (they are proven — see `dowel-apply.ts:74-133`), and add `placeSolid`:
+
+```ts
+// src/lib/cut/joints/orient.ts
+export function placeSolid(
+  solid: any,
+  position: [number, number, number],
+  axis: [number, number, number],
+): any {
+  const mat = rotationMat4FromTo([0, 0, 1], axis);
+  return solid.transform(mat).translate(position);
+}
+
+// rotationMat4FromTo, normalize, cross moved verbatim from dowel-apply.ts:74-133
+export function rotationMat4FromTo(/* …exact body from dowel-apply.ts… */) { /* … */ }
+```
+
+Then in `dowel-apply.ts`, delete the local `rotationMat4FromTo/normalize/cross` and
+`import { placeSolid, rotationMat4FromTo } from "./joints/orient";`. Replace the body of
+`buildCylinder` to use `placeSolid(cyl, position, axis)`.
+
+- [ ] **Step 4: Run tests to verify pass (new + existing dowel-apply)**
+
+Run: `npx vitest run tests/cut/joints/orient.test.ts tests/cut/dowel-apply.test.ts`
+Expected: PASS (existing dowel-apply tests still green — proves the extraction is behavior-preserving).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/cut/joints/orient.ts src/lib/cut/dowel-apply.ts tests/cut/joints/orient.test.ts
+git commit -m "refactor(joints): extract shared orient helper from dowel-apply"
+```
+
+---
+
+### Task 3: `buildJointSolid` — cylinder + cube
+
+**Files:**
+- Create: `src/lib/cut/joints/shapes.ts`
+- Test: `tests/cut/joints/shapes.test.ts` (create)
+
+**Interfaces:**
+- Produces: `buildJointSolid(M, opts): Manifold` where
+  `opts = { shape: JointShape; diameter: number; length: number; taper?: number; grow?: number }`.
+  `grow` is the female clearance added on all sides (0 for the nominal male solid).
+- Consumes: `placeSolid` (Task 2). Caller orients/positions the returned solid.
+
+- [ ] **Step 1: Write the failing test (cylinder + cube volumes)**
+
+```ts
+// tests/cut/joints/shapes.test.ts
+import { describe, it, expect, beforeAll } from "vitest";
+import { initManifold } from "../../../src/lib/cut/manifold";
+import { buildJointSolid } from "../../../src/lib/cut/joints/shapes";
+
+let M: any;
+beforeAll(async () => { M = await initManifold(); });
+
+describe("buildJointSolid", () => {
+  it("cylinder nominal volume ≈ π r² h", () => {
+    const s = buildJointSolid(M, { shape: "cylinder", diameter: 6, length: 10 });
+    expect(s.status()).toBe("NoError");
+    expect(s.volume()).toBeCloseTo(Math.PI * 3 * 3 * 10, 0);
+    s.delete();
+  });
+
+  it("female cylinder grows radius by `grow`", () => {
+    const male = buildJointSolid(M, { shape: "cylinder", diameter: 6, length: 10 });
+    const female = buildJointSolid(M, { shape: "cylinder", diameter: 6, length: 10, grow: 0.2 });
+    expect(female.volume()).toBeGreaterThan(male.volume());
+    male.delete(); female.delete();
+  });
+
+  it("cube nominal volume = x*y*z", () => {
+    const s = buildJointSolid(M, { shape: "cube", diameter: 6, length: 10 });
+    expect(s.status()).toBe("NoError");
+    // cube maps diameter→x/y footprint, length→z. Exact for a box.
+    expect(s.volume()).toBeCloseTo(6 * 6 * 10, 3);
+    s.delete();
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run tests/cut/joints/shapes.test.ts`
+Expected: FAIL — `buildJointSolid` not defined.
+
+- [ ] **Step 3: Implement cylinder + cube branches**
+
+```ts
+// src/lib/cut/joints/shapes.ts
+import type { JointShape } from "../../../types";
+
+export type BuildJointOpts = {
+  shape: JointShape;
+  diameter: number;   // nominal footprint (mm)
+  length: number;     // mm along local +Z
+  taper?: number;     // 0..1 draft
+  grow?: number;      // female clearance added per side (mm)
+};
+
+/** Build a joint solid centered on local origin, extruding along +Z. */
+export function buildJointSolid(M: any, opts: BuildJointOpts): any {
+  const { shape, diameter, length, taper = 0, grow = 0 } = opts;
+  const r = diameter / 2 + grow;
+  switch (shape) {
+    case "cylinder": {
+      const rTop = (diameter / 2) * (1 - taper) + grow;
+      return M.Manifold.cylinder(length, r, rTop, 128, true);
+    }
+    case "cube": {
+      const x = diameter + 2 * grow;
+      return M.Manifold.cube([x, x, length], true);
+    }
+    default:
+      throw new Error(`buildJointSolid: shape ${shape} not implemented yet`);
+  }
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx vitest run tests/cut/joints/shapes.test.ts`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/cut/joints/shapes.ts tests/cut/joints/shapes.test.ts
+git commit -m "feat(joints): buildJointSolid — cylinder + cube shapes with taper/grow"
+```
+
+---
+
+### Task 4: `buildJointSolid` — cross
+
+**Files:**
+- Modify: `src/lib/cut/joints/shapes.ts`
+- Test: `tests/cut/joints/shapes.test.ts` (add case)
+
+**Interfaces:** extends `buildJointSolid` `shape: "cross"`.
+
+- [ ] **Step 1: Add failing test**
+
+```ts
+it("cross is a valid manifold with volume between one and two arms", () => {
+  const arm = 6 * 10; // approx single-arm cross-section×length reference
+  const s = buildJointSolid(M, { shape: "cross", diameter: 6, length: 10 });
+  expect(s.status()).toBe("NoError");
+  expect(s.isEmpty()).toBe(false);
+  // two overlapping arms: volume < 2× a single arm (overlap subtracted), > 1×
+  expect(s.volume()).toBeGreaterThan(arm);
+  s.delete();
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL** (`shape cross not implemented`)
+
+Run: `npx vitest run tests/cut/joints/shapes.test.ts`
+
+- [ ] **Step 3: Implement cross branch**
+
+Two boxes, second rotated 90° about Z; overlap is inherent (both centered), union with `.add`:
+
+```ts
+case "cross": {
+  const arm = diameter + 2 * grow;
+  const barW = arm / 3;                       // arm thickness
+  const a = M.Manifold.cube([arm, barW, length], true);
+  const b = M.Manifold.cube([barW, arm, length], true);
+  const out = a.add(b);                        // centered boxes overlap at core — safe union
+  a.delete(); b.delete();
+  return out;
+}
+```
+
+- [ ] **Step 4: Run — expect PASS**
+
+Run: `npx vitest run tests/cut/joints/shapes.test.ts`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/cut/joints/shapes.ts tests/cut/joints/shapes.test.ts
+git commit -m "feat(joints): cross shape — two overlapping bars unioned"
+```
+
+---
+
+### Task 5: `buildJointSolid` — dovetail (CrossSection)
+
+**Files:**
+- Modify: `src/lib/cut/joints/shapes.ts`
+- Test: `tests/cut/joints/shapes.test.ts` (add case)
+
+**Interfaces:** extends `buildJointSolid` `shape: "dovetail"`.
+
+- [ ] **Step 1: Add failing test**
+
+```ts
+it("dovetail is a valid manifold (trapezoid prism)", () => {
+  const s = buildJointSolid(M, { shape: "dovetail", diameter: 6, length: 10 });
+  expect(s.status()).toBe("NoError");
+  expect(s.isEmpty()).toBe(false);
+  expect(s.volume()).toBeGreaterThan(0);
+  s.delete();
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL**
+
+- [ ] **Step 3: Implement dovetail branch**
+
+Trapezoid contour in XY (wide base, narrow top) extruded along Z via `CrossSection.ofPolygons`:
+
+```ts
+case "dovetail": {
+  const half = diameter / 2 + grow;
+  const narrow = half * 0.6;
+  const h = diameter + 2 * grow;
+  // trapezoid centered on origin: base (y=-h/2) width 2*half, top (y=+h/2) width 2*narrow
+  const contour: Array<[number, number]> = [
+    [-half, -h / 2], [half, -h / 2], [narrow, h / 2], [-narrow, h / 2],
+  ];
+  const cs = M.CrossSection.ofPolygons([contour]);
+  const out = cs.extrude(length, 1, 0, undefined, true);
+  cs.delete();
+  return out;
+}
+```
+
+- [ ] **Step 4: Run — expect PASS**
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/cut/joints/shapes.ts tests/cut/joints/shapes.test.ts
+git commit -m "feat(joints): dovetail shape via CrossSection trapezoid extrude"
+```
+
+---
+
+### Task 6: `buildJointSolid` — puzzle
+
+**Files:**
+- Modify: `src/lib/cut/joints/shapes.ts`
+- Test: `tests/cut/joints/shapes.test.ts` (add case)
+
+**Interfaces:** extends `buildJointSolid` `shape: "puzzle"`.
+
+- [ ] **Step 1: Add failing test**
+
+```ts
+it("puzzle tab is a valid manifold (neck + lobe union)", () => {
+  const s = buildJointSolid(M, { shape: "puzzle", diameter: 6, length: 10 });
+  expect(s.status()).toBe("NoError");
+  expect(s.isEmpty()).toBe(false);
+  s.delete();
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL**
+
+- [ ] **Step 3: Implement puzzle branch**
+
+Neck square + overlapping lobe circle in 2D, unioned, extruded:
+
+```ts
+case "puzzle": {
+  const r = diameter / 2 + grow;
+  const neck = M.CrossSection.square([r, diameter + 2 * grow], true); // narrow stem along X
+  const lobe = M.CrossSection.circle(r, 64).translate([r * 0.9, 0]);  // overlaps neck end
+  const profile = neck.add(lobe);
+  const out = profile.extrude(length, 1, 0, undefined, true);
+  neck.delete(); lobe.delete(); profile.delete();
+  return out;
+}
+```
+
+- [ ] **Step 2b/4: Run — expect PASS**
+
+Run: `npx vitest run tests/cut/joints/shapes.test.ts`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/cut/joints/shapes.ts tests/cut/joints/shapes.test.ts
+git commit -m "feat(joints): puzzle tab shape — neck + lobe union extrude"
+```
+
+---
+
+### Task 7: `applyJoints` — female subtract + peg emit
+
+**Files:**
+- Create: `src/lib/cut/joints/apply.ts`
+- Test: `tests/cut/joints/apply.test.ts` (create)
+
+**Interfaces:**
+- Produces: `applyJoints(M, partA, partB, joints, preset): { partA, partB, jointPieces }`.
+  Mirrors the current `ApplyDowelsResult` shape so `cut-worker.ts` swaps cleanly.
+- Consumes: `buildJointSolid` (Tasks 3-6), `placeSolid` (Task 2), `resolveClearance` (Task 1).
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/cut/joints/apply.test.ts
+import { describe, it, expect, beforeAll } from "vitest";
+import { initManifold } from "../../../src/lib/cut/manifold";
+import { applyJoints } from "../../../src/lib/cut/joints/apply";
+import type { Joint } from "../../../src/types";
+
+let M: any;
+beforeAll(async () => { M = await initManifold(); });
+
+function box(size: number) { return M.Manifold.cube([size, size, size], true); }
+
+describe("applyJoints", () => {
+  const joint: Joint = {
+    id: "j", position: [0, 0, 0], axis: [0, 0, 1],
+    diameter: 4, length: 20, source: "auto", shape: "cylinder", polarity: "separate-peg",
+  };
+
+  it("subtracts a hole from both halves and emits one peg", () => {
+    const a = box(30), b = box(30);
+    const r = applyJoints(M, a, b, [joint], "pla-tight");
+    expect(r.partA.volume()).toBeLessThan(30 * 30 * 30);
+    expect(r.partB.volume()).toBeLessThan(30 * 30 * 30);
+    expect(r.jointPieces.length).toBe(1);
+    r.partA.delete(); r.partB.delete(); r.jointPieces.forEach((p: any) => p.delete());
+  });
+
+  it("magnet polarity emits no peg", () => {
+    const a = box(30), b = box(30);
+    const r = applyJoints(M, a, b, [{ ...joint, polarity: "magnet" }], "pla-tight");
+    expect(r.jointPieces.length).toBe(0);
+    r.partA.delete(); r.partB.delete();
+  });
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL** (`applyJoints` not defined)
+
+Run: `npx vitest run tests/cut/joints/apply.test.ts`
+
+- [ ] **Step 3: Implement `applyJoints`**
+
+```ts
+// src/lib/cut/joints/apply.ts
+import type { Joint, TolerancePreset } from "../../../types";
+import { resolveClearance } from "../../../types";
+import { buildJointSolid } from "./shapes";
+import { placeSolid } from "./orient";
+
+export type ApplyJointsResult = { partA: any; partB: any; jointPieces: any[] };
+
+export function applyJoints(
+  M: any, partA: any, partB: any, joints: Joint[], preset: TolerancePreset,
+): ApplyJointsResult {
+  let outA = partA, outB = partB;
+  const jointPieces: any[] = [];
+
+  for (const j of joints) {
+    const shape = j.shape ?? "cylinder";
+    const polarity = j.polarity ?? "separate-peg";
+    const clearance = resolveClearance(j, preset);
+
+    // Female cutter (grown by clearance), oriented + positioned onto the seam.
+    const cutterLocal = buildJointSolid(M, {
+      shape, diameter: j.diameter, length: j.length, taper: j.taper, grow: clearance,
+    });
+    const cutter = placeSolid(cutterLocal, j.position, j.axis);
+    cutterLocal.delete();
+
+    const newA = outA.subtract(cutter);
+    const newB = outB.subtract(cutter);
+    if (outA !== partA) outA.delete();
+    if (outB !== partB) outB.delete();
+    outA = newA; outB = newB;
+    cutter.delete();
+
+    if (polarity === "separate-peg" || polarity === "male") {
+      const pegLocal = buildJointSolid(M, {
+        shape, diameter: j.diameter, length: j.length, taper: j.taper, grow: 0,
+      });
+      jointPieces.push(placeSolid(pegLocal, j.position, j.axis));
+      pegLocal.delete();
+    }
+    // "female" / "magnet" emit no peg.
+  }
+  return { partA: outA, partB: outB, jointPieces };
+}
+```
+
+- [ ] **Step 4: Run — expect PASS**
+
+Run: `npx vitest run tests/cut/joints/apply.test.ts`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/cut/joints/apply.ts tests/cut/joints/apply.test.ts
+git commit -m "feat(joints): applyJoints — female subtract on both halves, polarity-aware peg emit"
+```
+
+---
+
+### Task 8: Magnet socket — blind recess
+
+**Files:**
+- Modify: `src/lib/cut/joints/apply.ts` (magnet depth positioning)
+- Test: `tests/cut/joints/magnet.test.ts` (create)
+
+**Interfaces:** magnet joints use a blind recess of depth `min(length, safe)` positioned `seam ± depth/2`, never perforating.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/cut/joints/magnet.test.ts
+import { describe, it, expect, beforeAll } from "vitest";
+import { initManifold } from "../../../src/lib/cut/manifold";
+import { applyJoints } from "../../../src/lib/cut/joints/apply";
+import type { Joint } from "../../../src/types";
+
+let M: any;
+beforeAll(async () => { M = await initManifold(); });
+
+it("magnet recess does not perforate a thick part", () => {
+  // 40mm cube; magnet depth 6 → each half keeps a solid floor, volume drop is bounded.
+  const a = M.Manifold.cube([40, 40, 40], true);
+  const b = M.Manifold.cube([40, 40, 40], true);
+  const j: Joint = {
+    id: "m", position: [0, 0, 0], axis: [0, 0, 1],
+    diameter: 8, length: 6, source: "auto", shape: "cylinder", polarity: "magnet",
+  };
+  const r = applyJoints(M, a, b, [j], "sla");
+  const full = 40 * 40 * 40;
+  const removed = full - r.partA.volume();
+  // removed ≈ one blind cylinder (π*4²*3 per half ≈ 150), NOT a through hole (π*4²*40).
+  expect(removed).toBeLessThan(400);
+  expect(removed).toBeGreaterThan(50);
+  r.partA.delete(); r.partB.delete();
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL** (magnet currently cuts a full-length through cylinder)
+
+Run: `npx vitest run tests/cut/joints/magnet.test.ts`
+
+- [ ] **Step 3: Implement blind-recess positioning**
+
+In `applyJoints`, before building the cutter, special-case magnet depth + offset:
+
+```ts
+// inside the loop, replacing the single cutter build for magnets:
+if (polarity === "magnet") {
+  const depth = j.length; // blind depth into each half
+  const axis = j.axis;
+  const cutA = placeSolid(
+    buildJointSolid(M, { shape, diameter: j.diameter, length: depth, taper: j.taper, grow: clearance }),
+    [j.position[0] + axis[0] * depth / 2, j.position[1] + axis[1] * depth / 2, j.position[2] + axis[2] * depth / 2],
+    axis,
+  );
+  const cutB = placeSolid(
+    buildJointSolid(M, { shape, diameter: j.diameter, length: depth, taper: j.taper, grow: clearance }),
+    [j.position[0] - axis[0] * depth / 2, j.position[1] - axis[1] * depth / 2, j.position[2] - axis[2] * depth / 2],
+    axis,
+  );
+  const newA = outA.subtract(cutA);
+  const newB = outB.subtract(cutB);
+  if (outA !== partA) outA.delete();
+  if (outB !== partB) outB.delete();
+  outA = newA; outB = newB;
+  cutA.delete(); cutB.delete();
+  continue; // no peg
+}
+```
+
+(Note: the previous through-cutter build/subtract lives in the non-magnet branch.)
+
+- [ ] **Step 4: Run — expect PASS** (magnet + apply + shapes all green)
+
+Run: `npx vitest run tests/cut/joints/`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/cut/joints/apply.ts tests/cut/joints/magnet.test.ts
+git commit -m "feat(joints): magnet socket — blind recess on both faces, no through-hole"
+```
+
+---
+
+### Task 9: Wire worker to `applyJoints`; retire `applyDowels`
+
+**Files:**
+- Modify: `src/workers/cut-worker.ts:1-56`
+- Modify: `src/lib/cut/dowel-apply.ts` (re-export `buildDowelPiece` if still used, else delete after callers migrate)
+- Test: `tests/cut/cut-client.test.ts` (existing — must still pass), add a shape round-trip case
+
+**Interfaces:**
+- `CutWorkerRequest.dowels: Joint[]` (field name unchanged, type widened). Worker calls `applyJoints`, and `setCircularSegments(128)` once after `initManifold`.
+
+- [ ] **Step 1: Add a failing worker/client test (non-cylinder shape round-trips)**
+
+```ts
+// tests/cut/cut-client.test.ts — add
+it("runs a cut with a cube joint and returns parts + one peg", async () => {
+  // reuse the existing cube mesh fixture + plane from this file's setup
+  const res = await runCut(cubeMesh, plane, [
+    { id: "j", position: [0, 0, 0], axis: [0, 0, 1], diameter: 4, length: 8,
+      source: "auto", shape: "cube", polarity: "separate-peg" },
+  ], "pla-tight");
+  expect(res.partA).toBeDefined();
+  expect(res.dowelPieces.length).toBe(1);
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL** (worker still imports `applyDowels`; cube unsupported there)
+
+Run: `npx vitest run tests/cut/cut-client.test.ts`
+
+- [ ] **Step 3: Swap the worker call**
+
+In `src/workers/cut-worker.ts`: replace `import { applyDowels }` with
+`import { applyJoints } from "../lib/cut/joints/apply";`; after `const M = await initManifold();` add
+`M.setCircularSegments(128);`; change the apply line to
+`const result = applyJoints(M, cut.partA.manifold, cut.partB.manifold, dowels, tolerance);`
+and rename `result.dowelPieces` → `result.jointPieces` throughout the cleanup + serialize block (keep the
+response field name `dowelPieces` so `cut-client.ts` is unchanged). Update `CutWorkerRequest.dowels` type
+to `Joint[]`.
+
+- [ ] **Step 4: Run — expect PASS** (new + all existing cut tests)
+
+Run: `npx vitest run tests/cut/`
+Expected: PASS, including untouched `dowel-apply.test.ts` (cylinder default path) and `cut-client.test.ts`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/workers/cut-worker.ts src/lib/cut/dowel-apply.ts tests/cut/cut-client.test.ts
+git commit -m "feat(joints): route cut worker through applyJoints — setCircularSegments once"
+```
+
+---
+
+### Task 10: UI — shape + polarity picker in CutPanel
+
+**Files:**
+- Modify: `src/components/CutPanel.tsx`
+- Modify: `src/App.tsx` (thread `shape`/`polarity` into auto-placed joints; default cylinder/separate-peg)
+- Modify: `src/components/DowelMarkers.tsx` (marker color/label by shape — optional visual)
+- Test: `tests/components/CutPanel.test.tsx` (add — follow existing `PrinterPanel.test.tsx` pattern)
+
+**Interfaces:**
+- `CutPanel` gains props `jointShape: JointShape`, `onJointShapeChange`, `jointPolarity: JointPolarity`, `onJointPolarityChange`. `App` owns the state and passes `shape`/`polarity` when constructing joints in `autoPlaceCutDowels` results and manual joints.
+
+- [ ] **Step 1: Write the failing UI test**
+
+```tsx
+// tests/components/CutPanel.test.tsx (excerpt — match existing render harness)
+it("calls onJointShapeChange when a shape is selected", async () => {
+  const onShape = vi.fn();
+  render(<CutPanel {...baseProps} jointShape="cylinder" onJointShapeChange={onShape} />);
+  await userEvent.selectOptions(screen.getByLabelText(/joint shape/i), "dovetail");
+  expect(onShape).toHaveBeenCalledWith("dovetail");
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL** (no shape control)
+
+Run: `npx vitest run tests/components/CutPanel.test.tsx`
+
+- [ ] **Step 3: Add the picker (Filament tokens, no raw palette)**
+
+Add a `<select aria-label="Joint shape">` (cylinder/cube/cross/dovetail/puzzle) and a polarity
+`<select aria-label="Joint polarity">` (separate-peg/male/female/magnet) to `CutPanel`, styled with
+`bg-[var(--surface)]`/`border-[var(--border)]` per the Filament rules in CLAUDE.md. Wire the new props.
+In `App.tsx`, set `shape`/`polarity` on each `Joint` produced by `autoPlaceCutDowels` and on manual joints.
+
+- [ ] **Step 4: Run — expect PASS**
+
+Run: `npx vitest run tests/components/CutPanel.test.tsx`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/components/CutPanel.tsx src/components/DowelMarkers.tsx src/App.tsx tests/components/CutPanel.test.tsx
+git commit -m "feat(joints): shape + polarity picker in cut panel — defaults preserve dowel behavior"
+```
+
+---
+
+### Task 11: M1 verification + smoke test doc
+
+- [ ] **Step 1: Full test + typecheck**
+
+Run: `npm run test && npm run typecheck`
+Expected: PASS.
+
+- [ ] **Step 2: Both builds**
+
+Run: `npm run build:web && npm run build`
+Expected: both succeed.
+
+- [ ] **Step 3: Write `docs/m1-joints-smoke-test.md`**
+
+Follow the existing `docs/m*-smoke-test.md` format: load `public/sample-keycap.3mf`, make a cut with each
+shape (cylinder/cube/cross/dovetail/puzzle) and each polarity, confirm parts + pegs export and open in a
+slicer; magnet produces recesses with no peg; legacy behavior (default cut) unchanged.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add docs/m1-joints-smoke-test.md
+git commit -m "docs(m1): joint-system smoke test checklist"
+```
+
+- [ ] **STOP — pause for user review before M2.**
+
+---
+
+# MILESTONE 2 — Test-fit generator + tolerance presets (outline)
+
+Expand to full TDD detail after M1 review. Locked interfaces:
+
+- **Create `src/lib/cut/test-fit.ts`** (pure): `generateTestFitPairs(M, opts): { meshes: SerializedMesh[]; names: string[] }`
+  where `opts = { count; step; cubeSize; keyDepth; keyWidth; shape: JointShape; baseClearance; shuffleShapes? }`.
+  Emits `count` male+female coupon block pairs; pair *i* uses clearance `baseClearance + i*step`; reuses
+  `buildJointSolid` (male `grow:0`, female `grow:clearance`) subtracted from small cube blocks.
+- **Tests** `tests/cut/test-fit.test.ts`: pair count = `count`; clearance sweep is monotonic; female block
+  hole volume grows with `i`; names like `testfit_<shape>_c0.15_(A|B).stl`.
+- **Export path**: feed `meshes` into the existing `exporters/zip-export` (grouped) — new toolbar action
+  "Generate test-fit coupons" (behind an export-menu item). No scene mutation.
+- Tasks (bite-sized): (1) `generateTestFitPairs` cube-block male/female + test; (2) clearance sweep + naming + test;
+  (3) shuffle option + test; (4) export wiring + toolbar action + component test; (5) M2 verify + `docs/m2-testfit-smoke-test.md`; STOP.
+
+---
+
+# MILESTONE 3a — Separate components + cap verification (outline)
+
+- **`src/lib/cut/separate.ts`**: `separateComponents(manifold): Manifold[]` via `manifold.decompose()`; worker
+  op `"separate"` returning N serialized meshes; App registers each as a new part (reuse cut result-part path).
+- **Cap verification**: `tests/cut/caps.test.ts` asserting post-`splitByPlane` results satisfy
+  `status()==='NoError' && !isEmpty() && volume()>0`; `tests/cut/decompose.test.ts` asserting
+  `decompose().length` on a two-body fixture (build two disjoint cubes, union, decompose → 2).
+- Tasks: (1) `separateComponents` + decompose test; (2) worker `"separate"` op + client; (3) PartsTree action + UI test;
+  (4) cap-validity assertion tests; (5) M3a verify + `docs/m3a-separate-caps-smoke-test.md`; STOP.
+
+---
+
+# MILESTONE 3b — Seam labels (outline)
+
+- **Font asset**: copy `three/examples/fonts/helvetiker_regular.typeface.json` (63 KB) into
+  `public/fonts/helvetiker_regular.typeface.json` + its `LICENSE` text as `public/fonts/HELVETIKER-LICENSE.txt`.
+- **`src/lib/cut/joints/labels.ts`**: `buildSeamLabel(M, font, text, { depth, size, mode }): Manifold` — parse via
+  `new FontLoader().parse(json)` (prefetched, worker-safe), sample glyph outlines → `CrossSection.ofPolygons` →
+  `extrude(depth)`; alphanumeric only; validate `status()`/`isEmpty()`. `mode: 'emboss' | 'deboss'`.
+- **Apply**: emboss = `part.union(placeSolid(label, seamPoint, outwardNormal))`; deboss =
+  `part.subtract(...)` inward with small overlap. Wire an optional label spec through the worker cut request.
+- **Tests** `tests/cut/joints/labels.test.ts`: emboss increases part volume; deboss decreases it; label solid
+  `status()==='NoError'`; DO NOT route through `meshToManifold`.
+- Tasks: (1) font asset + prefetch plumbing; (2) `buildSeamLabel` CrossSection extrude + test; (3) emboss/deboss apply + test;
+  (4) worker + UI (label field, emboss/deboss toggle) + test; (5) M3b verify + `docs/m3b-labels-smoke-test.md`; STOP.
+
+---
+
+## Self-review (spec coverage)
+
+- Joint shapes (all 5) → Tasks 3-6 ✅; magnet socket → Task 8 ✅; polarity/taper/clearance → Tasks 1,7 ✅;
+  back-compat → Tasks 1,2,9 (existing tests must pass) ✅; worker/UI → Tasks 9,10 ✅.
+- Test-fit generator → M2 ✅; separate-components → M3a ✅; cap verification → M3a ✅; seam labels
+  (emboss+deboss) → M3b ✅; font license → M3b ✅.
+- Clearance semantics unchanged → `resolveClearance` + `grow` per-side, default preset path identical ✅.
+- Web-only / no `src-tauri` → all tasks WASM-side ✅. Both-build gate → each milestone verify step ✅.
