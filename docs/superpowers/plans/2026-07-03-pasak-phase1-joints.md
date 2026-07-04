@@ -1433,19 +1433,318 @@ git commit -m "feat(separate): PartsTree separate action wired to performSeparat
 
 ---
 
-# MILESTONE 3b — Seam labels (outline)
+# MILESTONE 3b — Seam labels
 
-- **Font asset**: copy `three/examples/fonts/helvetiker_regular.typeface.json` (63 KB) into
-  `public/fonts/helvetiker_regular.typeface.json` + its `LICENSE` text as `public/fonts/HELVETIKER-LICENSE.txt`.
-- **`src/lib/cut/joints/labels.ts`**: `buildSeamLabel(M, font, text, { depth, size, mode }): Manifold` — parse via
-  `new FontLoader().parse(json)` (prefetched, worker-safe), sample glyph outlines → `CrossSection.ofPolygons` →
-  `extrude(depth)`; alphanumeric only; validate `status()`/`isEmpty()`. `mode: 'emboss' | 'deboss'`.
-- **Apply**: emboss = `part.union(placeSolid(label, seamPoint, outwardNormal))`; deboss =
-  `part.subtract(...)` inward with small overlap. Wire an optional label spec through the worker cut request.
-- **Tests** `tests/cut/joints/labels.test.ts`: emboss increases part volume; deboss decreases it; label solid
-  `status()==='NoError'`; DO NOT route through `meshToManifold`.
-- Tasks: (1) font asset + prefetch plumbing; (2) `buildSeamLabel` CrossSection extrude + test; (3) emboss/deboss apply + test;
-  (4) worker + UI (label field, emboss/deboss toggle) + test; (5) M3b verify + `docs/m3b-labels-smoke-test.md`; STOP.
+Deliverable: emboss (raised) or deboss (engraved) a short alphanumeric ID onto a part as real geometry,
+so assembled pieces are identifiable. Glyph outlines come from a bundled typeface parsed by three's
+`FontLoader`, fed to `manifold-3d`'s `CrossSection` (NOT through `meshToManifold`).
+
+## File structure (M3b)
+
+- Add `src/lib/cut/joints/helvetiker_regular.typeface.json` (copied from `three/examples/fonts/`, imported at
+  build time so it works offline in both targets and in vitest) + `public/fonts/HELVETIKER-LICENSE.txt` (the
+  three `examples/fonts/LICENSE` text, for attribution).
+- Create `src/lib/cut/joints/labels.ts` — `buildSeamLabel` + `applySeamLabel`.
+- Modify `src/workers/cut-worker.ts` + `src/lib/cut/cut-client.ts` — op `"label"` + `runLabel`.
+- Modify `src/lib/session.ts` + `src/hooks/useCutSession.ts` — `applyLabelResult` (swap a part's geometry
+  in place) + `performLabel`.
+- Modify `src/components/PartsTree.tsx` (or CutPanel) + `src/App.tsx` — a "Label" action.
+- Tests: `tests/cut/joints/labels.test.ts`, `tests/cut/cut-client.test.ts`, `tests/session.test.ts`.
+
+---
+
+### Task 22: Font asset + `buildSeamLabel`
+
+**Files:**
+- Add: `src/lib/cut/joints/helvetiker_regular.typeface.json`, `public/fonts/HELVETIKER-LICENSE.txt`
+- Create: `src/lib/cut/joints/labels.ts`
+- Test: `tests/cut/joints/labels.test.ts`
+
+**Interfaces:**
+- Produces: `buildSeamLabel(M: any, text: string, opts?: { size?: number; depth?: number }): any` — a solid
+  extruded from local z=0 to z=depth, centered in XY, representing `text`. Returns a Manifold (caller deletes).
+- Font parsing memoized via `new FontLoader().parse(fontJson)` on the build-time JSON import (DOM-free,
+  worker-safe). Glyph outlines → `CrossSection.ofPolygons(contours, fillRule)` → `.extrude(depth)`.
+
+Copy the asset first:
+```bash
+cp node_modules/three/examples/fonts/helvetiker_regular.typeface.json src/lib/cut/joints/helvetiker_regular.typeface.json
+cp node_modules/three/examples/fonts/LICENSE public/fonts/HELVETIKER-LICENSE.txt
+```
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/cut/joints/labels.test.ts
+import { describe, it, expect, beforeAll } from "vitest";
+import { initManifold } from "../../../src/lib/cut/manifold";
+import { buildSeamLabel } from "../../../src/lib/cut/joints/labels";
+
+let M: any;
+beforeAll(async () => { M = await initManifold(); });
+
+describe("buildSeamLabel", () => {
+  it("builds a valid solid for an alphanumeric id", () => {
+    const s = buildSeamLabel(M, "A", { size: 6, depth: 1 });
+    expect(s.status()).toBe("NoError");
+    expect(s.isEmpty()).toBe(false);
+    expect(s.volume()).toBeGreaterThan(0);
+    s.delete();
+  });
+
+  it("multi-char labels have more volume than a single char", () => {
+    const a = buildSeamLabel(M, "A", { size: 6, depth: 1 });
+    const ab = buildSeamLabel(M, "AB", { size: 6, depth: 1 });
+    expect(ab.volume()).toBeGreaterThan(a.volume());
+    a.delete(); ab.delete();
+  });
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL** (`buildSeamLabel` not defined)
+
+Run: `npx vitest run tests/cut/joints/labels.test.ts`
+
+- [ ] **Step 3: Implement `buildSeamLabel`**
+
+```ts
+// src/lib/cut/joints/labels.ts
+import { FontLoader, type Font } from "three/examples/jsm/loaders/FontLoader.js";
+import fontJson from "./helvetiker_regular.typeface.json";
+
+let cachedFont: Font | null = null;
+function getFont(): Font {
+  if (!cachedFont) cachedFont = new FontLoader().parse(fontJson as any);
+  return cachedFont;
+}
+
+/** A raised solid of `text`, extruded from z=0..depth, centered on the XY origin. */
+export function buildSeamLabel(M: any, text: string, opts?: { size?: number; depth?: number }): any {
+  const size = opts?.size ?? 6;
+  const depth = opts?.depth ?? 1;
+  const shapes = getFont().generateShapes(text, size); // THREE.Shape[]
+
+  // Collect every contour (glyph outers + holes) as manifold [x,y] polygons.
+  // EvenOdd fill treats holes correctly regardless of winding.
+  const contours: Array<Array<[number, number]>> = [];
+  for (const shape of shapes) {
+    const { shape: outer, holes } = shape.extractPoints(6);
+    contours.push(outer.map((p) => [p.x, p.y] as [number, number]));
+    for (const h of holes) contours.push(h.map((p) => [p.x, p.y] as [number, number]));
+  }
+
+  const cs = M.CrossSection.ofPolygons(contours, "EvenOdd");
+  // Center the text on the origin using its 2D bounds.
+  const b = cs.bounds(); // { min:[x,y], max:[x,y] } — verify method name in manifold.d.ts
+  const cx = (b.min[0] + b.max[0]) / 2;
+  const cy = (b.min[1] + b.max[1]) / 2;
+  const centered = cs.translate([-cx, -cy]);
+  cs.delete();
+  const out = centered.extrude(depth, 1, 0, undefined, false); // z: 0..depth
+  centered.delete();
+  return out;
+}
+```
+
+Verify against `node_modules/manifold-3d/manifold.d.ts`: the `FillRule` literal accepted by
+`CrossSection.ofPolygons` (likely `"EvenOdd"`/`"NonZero"`/`"Positive"`), and the CrossSection bounds accessor
+(`bounds()` vs `.bounds` property) — adapt if the names differ. If `generateShapes` returns clockwise
+outers that manifold rejects, keep `"EvenOdd"` (winding-agnostic).
+
+- [ ] **Step 4: Run — expect PASS**
+
+Run: `npx vitest run tests/cut/joints/labels.test.ts`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/cut/joints/labels.ts src/lib/cut/joints/helvetiker_regular.typeface.json public/fonts/HELVETIKER-LICENSE.txt tests/cut/joints/labels.test.ts
+git commit -m "feat(labels): buildSeamLabel — typeface glyphs to manifold via CrossSection extrude"
+```
+
+---
+
+### Task 23: `applySeamLabel` — emboss / deboss
+
+**Files:**
+- Modify: `src/lib/cut/joints/labels.ts`
+- Test: `tests/cut/joints/labels.test.ts` (add)
+
+**Interfaces:**
+- Produces: `applySeamLabel(M, part, text, opts, position, axis): any` where
+  `opts = { mode: 'emboss' | 'deboss'; size?: number; depth?: number }`. Emboss unions the label onto the
+  surface (protruding along `axis`); deboss subtracts it (engraved, placed `axis*-depth` so the recess ends
+  at the surface). Reuses `placeSolid` + `shiftAlong`.
+
+- [ ] **Step 1: Add failing tests**
+
+```ts
+import { applySeamLabel } from "../../../src/lib/cut/joints/labels";
+
+it("emboss adds volume, deboss removes volume on the top face", () => {
+  const mk = () => M.Manifold.cube([30, 30, 30], true);
+  const top: [number, number, number] = [0, 0, 15];
+  const up: [number, number, number] = [0, 0, 1];
+  const base = mk().volume();
+
+  const cube1 = mk();
+  const embossed = applySeamLabel(M, cube1, "A", { mode: "emboss", size: 8, depth: 1 }, top, up);
+  expect(embossed.volume()).toBeGreaterThan(base);
+  cube1.delete(); embossed.delete();
+
+  const cube2 = mk();
+  const debossed = applySeamLabel(M, cube2, "A", { mode: "deboss", size: 8, depth: 1 }, top, up);
+  expect(debossed.volume()).toBeLessThan(base);
+  cube2.delete(); debossed.delete();
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL**
+
+- [ ] **Step 3: Implement `applySeamLabel`**
+
+```ts
+import { placeSolid } from "./orient";
+
+function shiftAlong(p: [number, number, number], a: [number, number, number], d: number): [number, number, number] {
+  return [p[0] + a[0] * d, p[1] + a[1] * d, p[2] + a[2] * d];
+}
+
+export function applySeamLabel(
+  M: any, part: any, text: string,
+  opts: { mode: "emboss" | "deboss"; size?: number; depth?: number },
+  position: [number, number, number], axis: [number, number, number],
+): any {
+  const depth = opts.depth ?? 1;
+  const label = buildSeamLabel(M, text, { size: opts.size, depth });
+  // Deboss: sink the recess so it ends flush at the surface. Emboss: protrude outward.
+  const pos = opts.mode === "deboss" ? shiftAlong(position, axis, -depth) : position;
+  const placed = placeSolid(label, pos, axis);
+  label.delete();
+  const out = opts.mode === "emboss" ? part.union(placed) : part.subtract(placed);
+  placed.delete();
+  return out;
+}
+```
+
+- [ ] **Step 4: Run — expect PASS**
+
+Run: `npx vitest run tests/cut/joints/labels.test.ts`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/cut/joints/labels.ts tests/cut/joints/labels.test.ts
+git commit -m "feat(labels): applySeamLabel — emboss (union) / deboss (subtract)"
+```
+
+---
+
+### Task 24: Worker `"label"` op + client bridge
+
+**Files:**
+- Modify: `src/workers/cut-worker.ts`, `src/lib/cut/cut-client.ts`
+- Test: `tests/cut/cut-client.test.ts` (add a `runLabel` case)
+
+**Interfaces:**
+- Worker: request `{ reqId; op: "label"; meshGeometry; label: { text; mode; size?; depth?; position; axis } }`;
+  response `{ ok: true; labeled: SerializedMesh }`.
+- Client: `runLabel(mesh, spec): Promise<THREE.Group>` via the existing `submit` helper.
+- Worker handler: reconstruct the mesh → `meshToManifold` → `applySeamLabel(M, man, …)` → serialize via
+  `serializeAll` → delete all → post.
+
+- [ ] **Step 1: Add a failing client test**
+
+```ts
+it("runLabel returns a labeled mesh group", async () => {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(30, 30, 30));
+  const g = await runLabel(mesh, {
+    text: "A", mode: "emboss", size: 8, depth: 1, position: [0, 0, 15], axis: [0, 0, 1],
+  });
+  expect(g).toBeDefined();
+  expect(g.children.length).toBe(1);
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL**
+
+- [ ] **Step 3: Implement the op + `runLabel`**
+
+Widen the request union with the `"label"` variant; handler mirrors the `separate` path (mesh→manifold,
+apply, serializeAll, delete, post `{ labeled }`). `runLabel` mirrors `runSeparate` through `submit`,
+mapping `resp.labeled` via `deserialize`. Import `applySeamLabel` in the worker. Keep other ops unchanged.
+
+- [ ] **Step 4: Run — expect PASS**
+
+Run: `npx vitest run tests/cut/`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/workers/cut-worker.ts src/lib/cut/cut-client.ts tests/cut/cut-client.test.ts
+git commit -m "feat(labels): worker label op + runLabel client bridge"
+```
+
+---
+
+### Task 25: Session swap + UI action
+
+**Files:**
+- Modify: `src/lib/session.ts`, `src/hooks/useCutSession.ts`, `src/components/PartsTree.tsx`, `src/App.tsx`
+- Test: `tests/session.test.ts`, `tests/components/PartsTree.test.tsx` (add)
+
+**Interfaces:**
+- `applyLabelResult(s, partId, out: {mesh; group}): Session` — swaps the part's `mesh`/`group` in place
+  (keeps id/name/color/parentId; updates `triCount`).
+- `performLabel(partId, text, mode)` in `useCutSession` — labels the part at the top-center of its bbox
+  (`axis = +Z`, `position = bbox top center`), `runLabel` → `applyLabelResult`. Same busy/error/push shell.
+- PartsTree gains a "Label" action (prompts/uses the part's short id as default text, emboss default).
+
+- [ ] **Step 1: Add a failing session test**
+
+```ts
+it("applyLabelResult swaps a part's geometry in place, keeping its identity", () => {
+  const s0 = /* session with a part 'p0' (reuse file helper) */;
+  const before = s0.parts.get("p0")!;
+  const out = { mesh: new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2)), group: new THREE.Group() };
+  const s1 = applyLabelResult(s0, "p0", out);
+  const after = s1.parts.get("p0")!;
+  expect(after.meta.name).toBe(before.meta.name);
+  expect(after.mesh).toBe(out.mesh);
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL**
+
+- [ ] **Step 3: Implement reducer + hook + UI**
+
+`applyLabelResult` clones, replaces the target part's `mesh`/`group`, recomputes `triCount`, keeps meta.
+`performLabel` mirrors `performSeparate` (compute bbox top-center from the part group, call `runLabel`,
+`applyLabelResult`, push). PartsTree "Label" button (Filament tokens) calls `onLabel(partId)`; App wires it
+to a handler that reads a short id/text and `mode` (default emboss) and calls `session.performLabel`.
+
+- [ ] **Step 4: Run — expect PASS**
+
+Run: `npx vitest run tests/session.test.ts tests/components/PartsTree.test.tsx`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/session.ts src/hooks/useCutSession.ts src/components/PartsTree.tsx src/App.tsx tests/session.test.ts tests/components/PartsTree.test.tsx
+git commit -m "feat(labels): applyLabelResult + performLabel + PartsTree label action"
+```
+
+---
+
+### Task 26: M3b verification + smoke doc
+
+- [ ] **Step 1:** `npm run test && npm run typecheck` → PASS.
+- [ ] **Step 2:** `npm run build:web && npm run build` → both succeed (confirm the typeface JSON bundles and
+  the worker still initializes on both targets).
+- [ ] **Step 3:** Write `docs/m3b-labels-smoke-test.md` (existing style): emboss "A"/"B" on two cut halves,
+  deboss a number, confirm the raised/engraved text is legible in a slicer preview.
+- [ ] **Step 4:** `git add docs/m3b-labels-smoke-test.md && git commit -m "docs(m3b): seam-label smoke checklist"`
+- [ ] **STOP — Phase 1 complete; pause for user review.**
 
 ---
 
