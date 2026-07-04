@@ -139,6 +139,21 @@ export function applySeparateResult(
   return next;
 }
 
+export function applyLabelResult(
+  s: Session,
+  partId: PartId,
+  out: { mesh: THREE.Mesh; group: THREE.Group },
+): Session {
+  const next = cloneSession(s);
+  const part = next.parts.get(partId);
+  if (!part) throw new Error("Part missing");
+  part.mesh = out.mesh;
+  part.group = out.group;
+  part.meta = { ...part.meta, triCount: countTris(out.mesh) };
+  next.selectedPartId = partId;
+  return next;
+}
+
 export function setVisible(s: Session, partId: PartId, visible: boolean): Session {
   const next = cloneSession(s);
   const part = next.parts.get(partId);

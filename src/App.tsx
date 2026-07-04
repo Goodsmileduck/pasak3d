@@ -237,6 +237,18 @@ export default function App() {
     }
   }, [jointShape]);
 
+  const onLabelPart = useCallback((partId: PartId) => {
+    const part = session.session.parts.get(partId);
+    if (!part || part.isDowel) return;
+    const shortId = part.id.replace(/^p_/, "").replace(/[^a-z0-9]/gi, "").slice(0, 4).toUpperCase() || "A";
+    const raw = window.prompt("Label text", shortId);
+    const text = raw?.trim();
+    if (!text) return;
+    void session.performLabel(partId, text, "emboss");
+    setPreviewPlane(null);
+    setPreviewDowels([]);
+  }, [session]);
+
   const performExport = async (opts: ExportOptions) => {
     const exportableParts = session.partsArray.filter((p) => p.meta.source === "cut");
     if (exportableParts.length === 0) return;
@@ -394,6 +406,7 @@ export default function App() {
             }}
             onToggleVisible={session.togglePartVisible}
             onSeparate={session.performSeparate}
+            onLabel={onLabelPart}
           />
         )}
         {showCutPanel && bbox && (

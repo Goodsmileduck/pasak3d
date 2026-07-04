@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import * as THREE from "three";
 import type { Dowel, CutPlaneSpec, TolerancePreset, ModelData, PartId, PrinterPreset } from "../types";
-import { runCut, runSeparate } from "../lib/cut/cut-client";
+import { runCut, runLabel, runSeparate } from "../lib/cut/cut-client";
 import { autoPlaceCutDowels } from "../lib/cut/auto-place-cut-dowels";
 import { centerOnXY } from "../lib/scene";
 import {
@@ -9,6 +9,7 @@ import {
   importPart,
   applyCutResult,
   applySeparateResult,
+  applyLabelResult,
   setVisible,
   selectPart,
   setPrinter as setPrinterReducer,
@@ -123,6 +124,41 @@ export function useCutSession() {
     [session, push],
   );
 
+  const performLabel = useCallback(
+    async (partId: PartId, text: string, mode: "emboss" | "deboss") => {
+      const target = session.parts.get(partId);
+      if (!target) return;
+      setBusy(true);
+      setError(null);
+      try {
+        const bbox = new THREE.Box3().setFromObject(target.group);
+        const position: [number, number, number] = [
+          (bbox.min.x + bbox.max.x) / 2,
+          (bbox.min.y + bbox.max.y) / 2,
+          bbox.max.z,
+        ];
+        const group = await runLabel(target.mesh, {
+          text,
+          mode,
+          size: 8,
+          depth: 1,
+          position,
+          axis: [0, 0, 1],
+        });
+        const labeled = firstMeshAndGroup(group);
+        if (!labeled) throw new Error("Label produced an empty part");
+        const next = applyLabelResult(session, partId, labeled);
+        syncSessionColors(next);
+        push(next);
+      } catch (e: any) {
+        setError(e?.message ?? String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [session, push],
+  );
+
   const performCutsSequential = useCallback(
     async (
       rootPartId: PartId,
@@ -217,6 +253,7 @@ export function useCutSession() {
     loadModel,
     performCut,
     performSeparate,
+    performLabel,
     performCutsSequential,
     undo,
     redo,
