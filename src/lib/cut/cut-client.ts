@@ -80,6 +80,29 @@ export async function runSeparate(mesh: THREE.Mesh): Promise<THREE.Group[]> {
   });
 }
 
+export async function runLabel(
+  mesh: THREE.Mesh,
+  spec: {
+    text: string;
+    mode: "emboss" | "deboss";
+    size?: number;
+    depth?: number;
+    position: [number, number, number];
+    axis: [number, number, number];
+  },
+): Promise<THREE.Group> {
+  const reqId = nextReqId++;
+  const { meshGeometry, transfer } = serializeMeshForWorker(mesh);
+  const req: CutWorkerRequest = { reqId, op: "label", meshGeometry, label: spec };
+
+  return submit(req, transfer, (resp) => {
+    if ("labeled" in resp) {
+      return deserialize(resp.labeled);
+    }
+    throw new Error("Unexpected cut response for label request");
+  });
+}
+
 function serializeMeshForWorker(mesh: THREE.Mesh): {
   meshGeometry: { positions: Float32Array; indices: Uint32Array | null };
   transfer: ArrayBuffer[];

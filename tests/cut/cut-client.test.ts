@@ -2,10 +2,11 @@ import { describe, it, expect } from "vitest";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { initManifold } from "../../src/lib/cut/manifold";
-import { manifoldToMesh } from "../../src/lib/cut/convert";
+import { manifoldToMesh, meshToManifold } from "../../src/lib/cut/convert";
 import { planeCutMesh } from "../../src/lib/cut/plane-cut";
 import { applyDowels } from "../../src/lib/cut/dowel-apply";
-import { runSeparate, runTestFit } from "../../src/lib/cut/cut-client";
+import { applySeamLabel } from "../../src/lib/cut/joints/labels";
+import { runLabel, runSeparate, runTestFit } from "../../src/lib/cut/cut-client";
 import { separateComponents } from "../../src/lib/cut/separate";
 import { generateTestFitPairs } from "../../src/lib/cut/test-fit";
 import type { CutWorkerRequest, CutWorkerResponse, SerializedMesh } from "../../src/workers/cut-worker";
@@ -47,6 +48,18 @@ class CutClientWorker {
       const components = manifolds.map(serialize);
       manifolds.forEach((m) => m.delete());
       this.onmessage?.({ data: { reqId: req.reqId, ok: true, components } } as MessageEvent<CutWorkerResponse>);
+      return;
+    }
+    if (req.op === "label") {
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute("position", new THREE.BufferAttribute(req.meshGeometry.positions, 3));
+      if (req.meshGeometry.indices) geom.setIndex(new THREE.BufferAttribute(req.meshGeometry.indices, 1));
+      const man = meshToManifold(M, new THREE.Mesh(geom));
+      const labeledMan = applySeamLabel(M, man, req.label.text, req.label, req.label.position, req.label.axis);
+      const labeled = serialize(labeledMan);
+      man.delete();
+      labeledMan.delete();
+      this.onmessage?.({ data: { reqId: req.reqId, ok: true, labeled } } as MessageEvent<CutWorkerResponse>);
       return;
     }
     throw new Error("CutClientWorker does not handle cut requests");
@@ -114,6 +127,17 @@ describe("cut pipeline (in-process equivalent of worker)", () => {
     const mesh = new THREE.Mesh(mergeGeometries([a, b]));
     const groups = await runSeparate(mesh);
     expect(groups.length).toBe(2);
+    vi.unstubAllGlobals();
+  });
+
+  it("runLabel returns a labeled mesh group", async () => {
+    vi.stubGlobal("Worker", CutClientWorker);
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(30, 30, 30));
+    const g = await runLabel(mesh, {
+      text: "A", mode: "emboss", size: 8, depth: 1, position: [0, 0, 15], axis: [0, 0, 1],
+    });
+    expect(g).toBeDefined();
+    expect(g.children.length).toBe(1);
     vi.unstubAllGlobals();
   });
 });

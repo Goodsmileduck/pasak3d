@@ -1,8 +1,10 @@
 import * as THREE from "three";
 import { initManifold } from "../lib/cut/manifold";
+import { meshToManifold } from "../lib/cut/convert";
 import { planeCutMesh } from "../lib/cut/plane-cut";
 import { separateComponents } from "../lib/cut/separate";
 import { applyJoints } from "../lib/cut/joints/apply";
+import { applySeamLabel } from "../lib/cut/joints/labels";
 import { generateTestFitPairs, type TestFitOpts } from "../lib/cut/test-fit";
 import type { CutPlaneSpec, Joint, TolerancePreset } from "../types";
 
@@ -26,12 +28,26 @@ export type CutWorkerRequest =
       reqId: number;
       op: "separate";
       meshGeometry: { positions: Float32Array; indices: Uint32Array | null };
+    }
+  | {
+      reqId: number;
+      op: "label";
+      meshGeometry: { positions: Float32Array; indices: Uint32Array | null };
+      label: {
+        text: string;
+        mode: "emboss" | "deboss";
+        size?: number;
+        depth?: number;
+        position: [number, number, number];
+        axis: [number, number, number];
+      };
     };
 
 export type CutWorkerResponse =
   | { reqId: number; ok: true; partA: SerializedMesh; partB: SerializedMesh; dowelPieces: SerializedMesh[] }
   | { reqId: number; ok: true; coupons: { name: string; mesh: SerializedMesh }[] }
   | { reqId: number; ok: true; components: SerializedMesh[] }
+  | { reqId: number; ok: true; labeled: SerializedMesh }
   | { reqId: number; ok: false; error: string };
 
 let workerManifoldPromise: Promise<any> | null = null;
@@ -75,6 +91,26 @@ self.onmessage = async (e: MessageEvent<CutWorkerRequest>) => {
         (self as any).postMessage({ reqId, ok: true, components } satisfies CutWorkerResponse, transfer);
       } finally {
         for (const c of comps) c.delete();
+      }
+      return;
+    }
+
+    if (e.data.op === "label") {
+      const man = meshToManifold(M, mesh);
+      const labeled = applySeamLabel(
+        M,
+        man,
+        e.data.label.text,
+        e.data.label,
+        e.data.label.position,
+        e.data.label.axis,
+      );
+      try {
+        const { meshes, transfer } = serializeAll([labeled]);
+        (self as any).postMessage({ reqId, ok: true, labeled: meshes[0] } satisfies CutWorkerResponse, transfer);
+      } finally {
+        man.delete();
+        labeled.delete();
       }
       return;
     }
