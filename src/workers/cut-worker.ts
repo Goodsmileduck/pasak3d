@@ -2,21 +2,29 @@ import * as THREE from "three";
 import { initManifold } from "../lib/cut/manifold";
 import { planeCutMesh } from "../lib/cut/plane-cut";
 import { applyJoints } from "../lib/cut/joints/apply";
+import { generateTestFitPairs, type TestFitOpts } from "../lib/cut/test-fit";
 import type { CutPlaneSpec, Joint, TolerancePreset } from "../types";
 
 export type SerializedMesh = { positions: Float32Array; indices: Uint32Array };
 
-export type CutWorkerRequest = {
-  reqId: number;
-  op: "cut";
-  meshGeometry: { positions: Float32Array; indices: Uint32Array | null };
-  plane: CutPlaneSpec;
-  dowels: Joint[];
-  tolerance: TolerancePreset;
-};
+export type CutWorkerRequest =
+  | {
+      reqId: number;
+      op: "cut";
+      meshGeometry: { positions: Float32Array; indices: Uint32Array | null };
+      plane: CutPlaneSpec;
+      dowels: Joint[];
+      tolerance: TolerancePreset;
+    }
+  | {
+      reqId: number;
+      op: "testfit";
+      testfit: TestFitOpts;
+    };
 
 export type CutWorkerResponse =
   | { reqId: number; ok: true; partA: SerializedMesh; partB: SerializedMesh; dowelPieces: SerializedMesh[] }
+  | { reqId: number; ok: true; coupons: { name: string; mesh: SerializedMesh }[] }
   | { reqId: number; ok: false; error: string };
 
 let workerManifoldPromise: Promise<any> | null = null;
@@ -32,9 +40,28 @@ function getWorkerManifold(): Promise<any> {
 }
 
 self.onmessage = async (e: MessageEvent<CutWorkerRequest>) => {
-  const { reqId, plane, dowels, tolerance, meshGeometry } = e.data;
+  const { reqId } = e.data;
   try {
     const M = await getWorkerManifold();
+    if (e.data.op === "testfit") {
+      const pairs = generateTestFitPairs(M, e.data.testfit);
+      const coupons = pairs.flatMap((p) => [
+        { name: p.maleName, mesh: serialize(p.male) },
+        { name: p.femaleName, mesh: serialize(p.female) },
+      ]);
+      for (const p of pairs) {
+        p.male.delete();
+        p.female.delete();
+      }
+      const transfer = coupons.flatMap((c) => [
+        c.mesh.positions.buffer as ArrayBuffer,
+        c.mesh.indices.buffer as ArrayBuffer,
+      ]);
+      (self as any).postMessage({ reqId, ok: true, coupons } satisfies CutWorkerResponse, transfer);
+      return;
+    }
+
+    const { plane, dowels, tolerance, meshGeometry } = e.data;
     const geom = new THREE.BufferGeometry();
     geom.setAttribute("position", new THREE.BufferAttribute(meshGeometry.positions, 3));
     if (meshGeometry.indices) geom.setIndex(new THREE.BufferAttribute(meshGeometry.indices, 1));

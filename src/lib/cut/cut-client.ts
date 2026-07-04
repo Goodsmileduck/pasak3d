@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import type { CutPlaneSpec, Dowel, TolerancePreset } from "../../types";
+import type { TestFitOpts } from "./test-fit";
 import type { CutWorkerRequest, CutWorkerResponse, SerializedMesh } from "../../workers/cut-worker";
+import type { ExportItem } from "../exporters/zip-export";
 import { createModelMaterial } from "../loaders/material";
 
 let worker: Worker | null = null;
@@ -53,17 +55,38 @@ export async function runCut(
 
   return new Promise((resolve, reject) => {
     pending.set(reqId, (resp) => {
-      if (resp.ok) {
+      if (resp.ok && "partA" in resp) {
         resolve({
           partA: deserialize(resp.partA),
           partB: deserialize(resp.partB),
           dowelPieces: resp.dowelPieces.map(deserialize),
         });
-      } else {
+      } else if (!resp.ok) {
         reject(new Error(resp.error));
+      } else {
+        reject(new Error("Unexpected test-fit response for cut request"));
       }
     });
     w.postMessage(req, transfer);
+  });
+}
+
+export async function runTestFit(opts: TestFitOpts): Promise<ExportItem[]> {
+  const w = getWorker();
+  const reqId = nextReqId++;
+  const req: CutWorkerRequest = { reqId, op: "testfit", testfit: opts };
+
+  return new Promise((resolve, reject) => {
+    pending.set(reqId, (resp) => {
+      if (resp.ok && "coupons" in resp) {
+        resolve(resp.coupons.map((c) => ({ name: c.name, mesh: deserializeMesh(c.mesh) })));
+      } else if (!resp.ok) {
+        reject(new Error(resp.error));
+      } else {
+        reject(new Error("Unexpected cut response for test-fit request"));
+      }
+    });
+    w.postMessage(req);
   });
 }
 
@@ -81,4 +104,8 @@ function deserialize(s: SerializedMesh): THREE.Group {
   const g = new THREE.Group();
   g.add(m);
   return g;
+}
+
+function deserializeMesh(s: SerializedMesh): THREE.Mesh {
+  return deserialize(s).children[0] as THREE.Mesh;
 }

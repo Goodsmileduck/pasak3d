@@ -23,14 +23,16 @@ function buildPair(M: any, shape: JointShape, o: TestFitOpts, clearance: number)
   const keyLen = o.keyDepth * 2;
 
   const blockA = M.Manifold.cube([o.cubeSize, o.cubeSize, o.cubeSize], true);
-  const peg = placeSolid(buildJointSolid(M, { shape, diameter: o.keyWidth, length: keyLen, grow: 0 }), top, AXIS);
+  const pegLocal = buildJointSolid(M, { shape, diameter: o.keyWidth, length: keyLen, grow: 0 });
+  const peg = placeSolid(pegLocal, top, AXIS);
   const male = blockA.add(peg);
-  blockA.delete(); peg.delete();
+  blockA.delete(); pegLocal.delete(); peg.delete();
 
   const blockB = M.Manifold.cube([o.cubeSize, o.cubeSize, o.cubeSize], true);
-  const hole = placeSolid(buildJointSolid(M, { shape, diameter: o.keyWidth, length: keyLen, grow: clearance }), top, AXIS);
+  const holeLocal = buildJointSolid(M, { shape, diameter: o.keyWidth, length: keyLen, grow: clearance });
+  const hole = placeSolid(holeLocal, top, AXIS);
   const female = blockB.subtract(hole);
-  blockB.delete(); hole.delete();
+  blockB.delete(); holeLocal.delete(); hole.delete();
 
   const c = clearance.toFixed(2);
   return {
