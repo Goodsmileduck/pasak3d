@@ -16,10 +16,12 @@ const baseProps = {
 };
 
 describe("CutPanel", () => {
-  it("calls onJointShapeChange when a shape is selected", async () => {
+  it("selecting a connector drives the underlying joint shape", async () => {
+    // The connector picker is the sole shape driver now (the redundant Shape
+    // select was removed); picking a keyed connector must set jointShape to match.
     const onShape = vi.fn();
-    render(<CutPanel {...baseProps} jointShape="cylinder" onJointShapeChange={onShape} />);
-    await userEvent.selectOptions(screen.getByLabelText(/joint shape/i), "dovetail");
+    render(<CutPanel {...baseProps} connectorId="cylinder" onJointShapeChange={onShape} />);
+    await userEvent.selectOptions(screen.getByLabelText(/connector/i), "dovetail");
     expect(onShape).toHaveBeenCalledWith("dovetail");
   });
 

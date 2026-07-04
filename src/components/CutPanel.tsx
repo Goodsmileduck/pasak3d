@@ -168,22 +168,6 @@ export function CutPanel({
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
-        <label className="block text-xs mt-2">Shape</label>
-        <select
-          aria-label="Joint shape"
-          value={jointShape}
-          onChange={(e) => {
-            const next = e.target.value as JointShape;
-            onJointShapeChange?.(next);
-            onConnectorChange?.(next);
-            fire(onPreviewChange, next, jointPolarity, next);
-          }}
-          className="w-full border border-[var(--border)] rounded px-2 py-1"
-        >
-          {JOINT_SHAPES.map((s) => (
-            <option key={s} value={s}>{titleCase(s)}</option>
-          ))}
-        </select>
         <label className="block text-xs mt-2">Polarity</label>
         <select
           aria-label="Joint polarity"

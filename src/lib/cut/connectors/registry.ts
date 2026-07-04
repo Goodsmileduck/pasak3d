@@ -1,7 +1,14 @@
 import type { Connector, ConnectorCategory } from "./types";
 import { m1KeyedConnectors } from "./m1-adapter";
+import type { JointShape } from "../../../types";
+import { JOINT_SHAPES } from "../../../types";
 
 export const DEFAULT_CONNECTOR_ID = "cylinder";
+
+/** True when a connector id is one of the legacy M1 shapes (id === JointShape). */
+export function isM1Shape(id: string): id is JointShape {
+  return (JOINT_SHAPES as readonly string[]).includes(id);
+}
 
 const ALL: Connector[] = [...m1KeyedConnectors()];
 

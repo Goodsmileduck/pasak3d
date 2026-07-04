@@ -24,3 +24,5 @@ Run before declaring P2-M1 connector-framework work complete:
 - Additional keyed connector variants are deferred to P2-M2
 - Snap-fit connectors are deferred to P2-M3
 - Advanced connector placement controls are deferred to P2-M4
+- Cosmetic (not a bug): the **Snap** category is empty until P2-M3, so selecting it shows a
+  disabled "No connectors" select. The cut still uses the last keyed connector; geometry is correct.
