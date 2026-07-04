@@ -28,4 +28,19 @@ describe("generateTestFitPairs", () => {
     expect(p.femaleName).toBe("testfit_cylinder_c0.10_B.stl");
     p.male.delete(); p.female.delete();
   });
+
+  it("sweeps clearance monotonically and the socket grows with clearance", () => {
+    const pairs = generateTestFitPairs(M, { ...base, count: 3, step: 0.1, baseClearance: 0.1 });
+    expect(pairs.map((p) => p.clearance)).toEqual([0.1, 0.2, 0.3].map((v) => expect.closeTo(v, 5)));
+    // Bigger clearance => bigger socket => less material in the female block.
+    expect(pairs[2].female.volume()).toBeLessThan(pairs[0].female.volume());
+    pairs.forEach((p) => { p.male.delete(); p.female.delete(); });
+  });
+
+  it("shuffleShapes cycles through the shape catalog per pair", () => {
+    const pairs = generateTestFitPairs(M, { ...base, count: 3, shuffleShapes: true });
+    const shapes = new Set(pairs.map((p) => p.shape));
+    expect(shapes.size).toBeGreaterThan(1);
+    pairs.forEach((p) => { p.male.delete(); p.female.delete(); });
+  });
 });

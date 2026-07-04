@@ -1,4 +1,4 @@
-import type { JointShape } from "../../types";
+import { JOINT_SHAPES, type JointShape } from "../../types";
 import { buildJointSolid } from "./joints/shapes";
 import { placeSolid } from "./joints/orient";
 
@@ -44,7 +44,8 @@ export function generateTestFitPairs(M: any, opts: TestFitOpts): TestFitPair[] {
   const pairs: TestFitPair[] = [];
   for (let i = 0; i < opts.count; i++) {
     const clearance = opts.baseClearance + i * opts.step;
-    pairs.push(buildPair(M, opts.shape, opts, clearance));
+    const shape = opts.shuffleShapes ? JOINT_SHAPES[i % JOINT_SHAPES.length] : opts.shape;
+    pairs.push(buildPair(M, shape, opts, clearance));
   }
   return pairs;
 }
