@@ -30,6 +30,18 @@ export function buildJointSolid(M: any, opts: BuildJointOpts): any {
       a.delete(); b.delete();
       return out;
     }
+    case "dovetail": {
+      const half = diameter / 2 + grow;
+      const narrow = half * 0.6;
+      const h = diameter + 2 * grow;
+      const contour: Array<[number, number]> = [
+        [-half, -h / 2], [half, -h / 2], [narrow, h / 2], [-narrow, h / 2],
+      ];
+      const cs = M.CrossSection.ofPolygons([contour]);
+      const out = cs.extrude(length, 1, 0, undefined, true);
+      cs.delete();
+      return out;
+    }
     default:
       throw new Error(`buildJointSolid: shape ${shape} not implemented yet`);
   }

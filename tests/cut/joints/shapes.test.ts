@@ -37,4 +37,12 @@ describe("buildJointSolid", () => {
     expect(s.volume()).toBeGreaterThan(arm);
     s.delete();
   });
+
+  it("dovetail is a valid manifold (trapezoid prism)", () => {
+    const s = buildJointSolid(M, { shape: "dovetail", diameter: 6, length: 10 });
+    expect(s.status()).toBe("NoError");
+    expect(s.isEmpty()).toBe(false);
+    expect(s.volume()).toBeGreaterThan(0);
+    s.delete();
+  });
 });
