@@ -54,6 +54,12 @@ export function applyConnectors(
   joints: Joint[],
   preset: TolerancePreset,
 ): ApplyJointsResult {
+  // Phase 2 supports one connector per cut. Dispatch on that single connector;
+  // fail loudly on a mixed-connector cut rather than silently mis-routing joints.
+  const ids = new Set(joints.map((j) => j.connectorId).filter(Boolean));
+  if (ids.size > 1) {
+    throw new Error("applyConnectors: mixed connectorIds in one cut are not supported.");
+  }
   const id = joints.find((j) => j.connectorId)?.connectorId;
   if (id && !isM1Shape(id)) {
     const connector = getConnector(id);

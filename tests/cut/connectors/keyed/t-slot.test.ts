@@ -23,11 +23,23 @@ describe("tSlotConnector", () => {
     piece.delete(); cavity.delete();
   });
 
-  it("the piece cap is wider than its neck (a real T)", () => {
+  it("the piece cap is genuinely wider than its neck (a real T, not a square)", () => {
     const piece = tSlotConnector.build.piece(M, { size: 8, length: 12, clearance: 0 })!;
-    // Cap occupies the bottom slab; neck the top. Slice bboxes: bottom half wider in X than top half.
-    const bb = piece.boundingBox();
-    expect(bb.max[0] - bb.min[0]).toBeCloseTo(8, 1);
+    const full = piece.boundingBox();
+    // Section a thin Y-strip and measure its X-width. Cap sits at low Y, neck at high Y.
+    const stripWidth = (yLo: number, yHi: number): number => {
+      const box = M.Manifold.cube([20, yHi - yLo, 20], true).translate([0, (yLo + yHi) / 2, 0]);
+      const slice = piece.intersect(box);
+      const bb = slice.boundingBox();
+      const w = bb.max[0] - bb.min[0];
+      box.delete(); slice.delete();
+      return w;
+    };
+    const capW = stripWidth(full.min[1], full.min[1] + 1.5);   // bottom strip = cap
+    const neckW = stripWidth(full.max[1] - 1.5, full.max[1]);  // top strip = neck
+    expect(capW).toBeCloseTo(8, 1);          // cap width == size
+    expect(neckW).toBeCloseTo(8 / 2.5, 0);   // neck width == size / 2.5
+    expect(capW).toBeGreaterThan(neckW + 2); // clearly a T, not a square
     piece.delete();
   });
 });

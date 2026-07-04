@@ -30,7 +30,7 @@ export const tSlotConnector: Connector = {
   category: "keyed",
   assembly: "separate-piece",
   defaults: {},
-  describe: "T-slot - slides in, resists pull-out",
+  describe: "T-slot - keys against shear and rotation at the seam",
   build: {
     femaleCavity: (M: any, p: ConnectorParams) => extrudeT(M, p.size, p.length, p.clearance),
     piece: (M: any, p: ConnectorParams) => extrudeT(M, p.size, p.length, 0),
