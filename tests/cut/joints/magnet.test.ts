@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { it, expect, beforeAll } from "vitest";
 import { initManifold } from "../../../src/lib/cut/manifold";
 import { applyJoints } from "../../../src/lib/cut/joints/apply";
 import type { Joint } from "../../../src/types";
