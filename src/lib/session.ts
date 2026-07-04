@@ -55,6 +55,33 @@ export type CutOutput = {
   dowelPieces: Array<{ mesh: THREE.Mesh; group: THREE.Group }>;
 };
 
+/** Register a generated (non-dowel) child part with a fresh palette color. */
+function addChild(
+  next: Session,
+  id: string,
+  name: string,
+  part: { mesh: THREE.Mesh; group: THREE.Group },
+  parentId: PartId | null,
+  cutId: CutId | null,
+): void {
+  next.parts.set(id, {
+    id,
+    mesh: part.mesh,
+    group: part.group,
+    isDowel: false,
+    meta: {
+      id,
+      name,
+      source: "cut",
+      parentId,
+      cutId,
+      visible: true,
+      color: pickColor(next.parts.size),
+      triCount: countTris(part.mesh),
+    },
+  });
+}
+
 export function applyCutResult(
   s: Session,
   parentId: PartId,
@@ -69,38 +96,8 @@ export function applyCutResult(
 
   const aId = `${parentId}_a`;
   const bId = `${parentId}_b`;
-  next.parts.set(aId, {
-    id: aId,
-    mesh: output.partA.mesh,
-    group: output.partA.group,
-    isDowel: false,
-    meta: {
-      id: aId,
-      name: `${parentName}-A`,
-      source: "cut",
-      parentId,
-      cutId,
-      visible: true,
-      color: pickColor(next.parts.size),
-      triCount: countTris(output.partA.mesh),
-    },
-  });
-  next.parts.set(bId, {
-    id: bId,
-    mesh: output.partB.mesh,
-    group: output.partB.group,
-    isDowel: false,
-    meta: {
-      id: bId,
-      name: `${parentName}-B`,
-      source: "cut",
-      parentId,
-      cutId,
-      visible: true,
-      color: pickColor(next.parts.size),
-      triCount: countTris(output.partB.mesh),
-    },
-  });
+  addChild(next, aId, `${parentName}-A`, output.partA, parentId, cutId);
+  addChild(next, bId, `${parentName}-B`, output.partB, parentId, cutId);
   output.dowelPieces.forEach((dp, i) => {
     const id = `${cutId}_d${i}`;
     next.parts.set(id, {
@@ -136,23 +133,7 @@ export function applySeparateResult(
   parent.meta = { ...parent.meta, visible: false };
 
   components.forEach((component, i) => {
-    const id = `${parentId}_c${i}`;
-    next.parts.set(id, {
-      id,
-      mesh: component.mesh,
-      group: component.group,
-      isDowel: false,
-      meta: {
-        id,
-        name: `${parentName}-${i + 1}`,
-        source: "cut",
-        parentId,
-        cutId: null,
-        visible: true,
-        color: pickColor(next.parts.size),
-        triCount: countTris(component.mesh),
-      },
-    });
+    addChild(next, `${parentId}_c${i}`, `${parentName}-${i + 1}`, component, parentId, null);
   });
   next.selectedPartId = components.length > 0 ? `${parentId}_c0` : parentId;
   return next;

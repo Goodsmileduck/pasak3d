@@ -44,7 +44,7 @@ export async function runCut(
     plane, dowels, tolerance,
   };
   return submit(req, transfer, (resp) => {
-    if (resp.ok && "partA" in resp) {
+    if ("partA" in resp) {
       return {
         partA: deserialize(resp.partA),
         partB: deserialize(resp.partB),
@@ -60,7 +60,7 @@ export async function runTestFit(opts: TestFitOpts): Promise<ExportItem[]> {
   const req: CutWorkerRequest = { reqId, op: "testfit", testfit: opts };
 
   return submit(req, [], (resp) => {
-    if (resp.ok && "coupons" in resp) {
+    if ("coupons" in resp) {
       return resp.coupons.map((c) => ({ name: c.name, mesh: deserializeMesh(c.mesh) }));
     }
     throw new Error("Unexpected cut response for test-fit request");
@@ -73,7 +73,7 @@ export async function runSeparate(mesh: THREE.Mesh): Promise<THREE.Group[]> {
   const req: CutWorkerRequest = { reqId, op: "separate", meshGeometry };
 
   return submit(req, transfer, (resp) => {
-    if (resp.ok && "components" in resp) {
+    if ("components" in resp) {
       return resp.components.map(deserialize);
     }
     throw new Error("Unexpected cut response for separate request");

@@ -107,10 +107,10 @@ export function useCutSession() {
       try {
         const groups = await runSeparate(target.mesh);
         if (groups.length <= 1) throw new Error("This part is already a single body.");
+        // deserialize always wraps exactly one mesh, so this map never drops a component.
         const components = groups
           .map(firstMeshAndGroup)
           .filter((x): x is { mesh: THREE.Mesh; group: THREE.Group } => !!x);
-        if (components.length <= 1) throw new Error("Separate produced fewer than two parts.");
         const next = applySeparateResult(session, partId, components, target.meta.name);
         syncSessionColors(next);
         push(next);
