@@ -48,7 +48,7 @@ describe("applyConnectors", () => {
   it("t-slot connector subtracts from both halves and emits one piece", () => {
     const j = {
       id: "j",
-      position: [0, 0, 0],
+      position: [0, 0, 0] as [number, number, number],
       axis: [0, 0, 1] as [number, number, number],
       diameter: 8,
       length: 12,
