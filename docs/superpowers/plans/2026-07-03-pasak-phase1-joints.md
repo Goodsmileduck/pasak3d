@@ -1143,15 +1143,293 @@ git commit -m "feat(testfit): toolbar action — generate + download coupon zip"
 
 ---
 
-# MILESTONE 3a — Separate components + cap verification (outline)
+# MILESTONE 3a — Separate components + cap verification
 
-- **`src/lib/cut/separate.ts`**: `separateComponents(manifold): Manifold[]` via `manifold.decompose()`; worker
-  op `"separate"` returning N serialized meshes; App registers each as a new part (reuse cut result-part path).
-- **Cap verification**: `tests/cut/caps.test.ts` asserting post-`splitByPlane` results satisfy
-  `status()==='NoError' && !isEmpty() && volume()>0`; `tests/cut/decompose.test.ts` asserting
-  `decompose().length` on a two-body fixture (build two disjoint cubes, union, decompose → 2).
-- Tasks: (1) `separateComponents` + decompose test; (2) worker `"separate"` op + client; (3) PartsTree action + UI test;
-  (4) cap-validity assertion tests; (5) M3a verify + `docs/m3a-separate-caps-smoke-test.md`; STOP.
+Deliverable: split a multi-body part into its connected components (each becomes a part in the tree),
+plus regression tests proving cuts stay watertight. Reuses the cut result-part registration pattern.
+
+## File structure (M3a)
+
+- Create `src/lib/cut/separate.ts` — `separateComponents(M, mesh) → Manifold[]` via `decompose()`.
+- Modify `src/workers/cut-worker.ts` + `src/lib/cut/cut-client.ts` — add op `"separate"`; while here,
+  extract the shared serialize/transfer (worker) + request-promise (client) helpers the M2 review deferred
+  (this is the third op — collapse the copy-paste now, keeping `runCut`/`runTestFit` behavior identical).
+- Modify `src/lib/session.ts` + `src/hooks/useCutSession.ts` — `applySeparateResult` + `performSeparate`.
+- Modify `src/components/PartsTree.tsx` + `src/App.tsx` — a "Separate" action on multi-body parts.
+- Tests: `tests/cut/separate.test.ts`, `tests/cut/caps.test.ts`, `tests/cut/cut-client.test.ts`,
+  `tests/session.test.ts`, `tests/components/PartsTree.test.tsx`.
+
+---
+
+### Task 17: `separateComponents` + cap-validity tests
+
+**Files:**
+- Create: `src/lib/cut/separate.ts`
+- Test: `tests/cut/separate.test.ts`, `tests/cut/caps.test.ts` (both create)
+
+**Interfaces:**
+- Produces: `separateComponents(M: any, mesh: THREE.Mesh): any[]` — converts the mesh to a manifold
+  (reuse `meshToManifold` from `convert.ts`), calls `.decompose()`, returns the component Manifolds
+  (caller serializes + deletes). Returns `[single]` when already connected.
+- Consumes: `meshToManifold` (`src/lib/cut/convert.ts`).
+
+- [ ] **Step 1: Write the failing tests**
+
+```ts
+// tests/cut/separate.test.ts
+import { describe, it, expect, beforeAll } from "vitest";
+import * as THREE from "three";
+import { initManifold } from "../../src/lib/cut/manifold";
+import { separateComponents } from "../../src/lib/cut/separate";
+import { manifoldToMesh } from "../../src/lib/cut/convert";
+
+let M: any;
+beforeAll(async () => { M = await initManifold(); });
+
+// Build a THREE.Mesh holding two disjoint cubes (one body at x=0, one at x=20).
+function twoCubeMesh(): THREE.Mesh {
+  const a = new THREE.BoxGeometry(4, 4, 4);
+  const b = new THREE.BoxGeometry(4, 4, 4).translate(20, 0, 0);
+  const merged = THREE.BufferGeometryUtils.mergeGeometries([a, b]);
+  return new THREE.Mesh(merged);
+}
+
+describe("separateComponents", () => {
+  it("splits two disjoint bodies into two components", () => {
+    const comps = separateComponents(M, twoCubeMesh());
+    expect(comps.length).toBe(2);
+    for (const c of comps) {
+      expect(c.status()).toBe("NoError");
+      expect(c.volume()).toBeCloseTo(64, 0);
+      c.delete();
+    }
+  });
+
+  it("returns a single component for a connected body", () => {
+    const cube = new THREE.Mesh(new THREE.BoxGeometry(4, 4, 4));
+    const comps = separateComponents(M, cube);
+    expect(comps.length).toBe(1);
+    comps.forEach((c) => c.delete());
+  });
+});
+```
+
+```ts
+// tests/cut/caps.test.ts — cuts must stay watertight (planar caps are closed)
+import { describe, it, expect, beforeAll } from "vitest";
+import * as THREE from "three";
+import { initManifold } from "../../src/lib/cut/manifold";
+import { planeCutMesh } from "../../src/lib/cut/plane-cut";
+
+let M: any;
+beforeAll(async () => { M = await initManifold(); });
+
+it("both halves of a plane cut are valid closed manifolds", async () => {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(10, 10, 10));
+  const { partA, partB } = await planeCutMesh(M, mesh, { normal: [1, 0, 0], constant: 0, axisSnap: "x" });
+  for (const p of [partA.manifold, partB.manifold]) {
+    expect(p.status()).toBe("NoError");
+    expect(p.isEmpty()).toBe(false);
+    expect(p.volume()).toBeGreaterThan(0);
+  }
+  partA.manifold.delete(); partB.manifold.delete();
+});
+```
+
+If `manifoldToMesh`/`BufferGeometryUtils` import paths differ, adapt to the real exports (check
+`src/lib/cut/convert.ts` and `three/examples/jsm/utils/BufferGeometryUtils.js`).
+
+- [ ] **Step 2: Run — expect FAIL** (`separateComponents` not defined)
+
+Run: `npx vitest run tests/cut/separate.test.ts tests/cut/caps.test.ts`
+
+- [ ] **Step 3: Implement `separateComponents`**
+
+```ts
+// src/lib/cut/separate.ts
+import * as THREE from "three";
+import { meshToManifold } from "./convert";
+
+/** Split a mesh into its connected-component manifolds. Caller serializes + deletes. */
+export function separateComponents(M: any, mesh: THREE.Mesh): any[] {
+  const man = meshToManifold(M, mesh);
+  const parts = man.decompose();   // Manifold[]; length 1 if already connected
+  man.delete();
+  return parts;
+}
+```
+
+- [ ] **Step 4: Run — expect PASS**
+
+Run: `npx vitest run tests/cut/separate.test.ts tests/cut/caps.test.ts`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/cut/separate.ts tests/cut/separate.test.ts tests/cut/caps.test.ts
+git commit -m "feat(separate): separateComponents via decompose + cap-validity regression tests"
+```
+
+---
+
+### Task 18: Worker `"separate"` op + shared op helpers
+
+**Files:**
+- Modify: `src/workers/cut-worker.ts`, `src/lib/cut/cut-client.ts`
+- Test: `tests/cut/cut-client.test.ts` (add a `runSeparate` case)
+
+**Interfaces:**
+- Worker: request `{ reqId; op: "separate"; meshGeometry }`; response `{ ok: true; components: SerializedMesh[] }`.
+- Client: `runSeparate(mesh: THREE.Mesh): Promise<THREE.Group[]>` (one Group per component).
+- Refactor (M2 debt): add a worker helper `serializeAll(manifolds): { meshes: SerializedMesh[]; transfer: ArrayBuffer[] }`
+  and a client helper `submit<T>(req, transfer, pick): Promise<T>` owning the pending-map + reject-on-`!ok`.
+  Re-express the existing `cut`/`testfit` handlers through them **without changing their behavior** (all
+  existing cut/testfit tests must stay green).
+
+- [ ] **Step 1: Add a failing client test**
+
+```ts
+// tests/cut/cut-client.test.ts — add
+it("runSeparate returns one group per connected component", async () => {
+  const a = new THREE.BoxGeometry(4, 4, 4);
+  const b = new THREE.BoxGeometry(4, 4, 4).translate(20, 0, 0);
+  const mesh = new THREE.Mesh(THREE.BufferGeometryUtils.mergeGeometries([a, b]));
+  const groups = await runSeparate(mesh);
+  expect(groups.length).toBe(2);
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL** (`runSeparate` not exported)
+
+Run: `npx vitest run tests/cut/cut-client.test.ts`
+
+- [ ] **Step 3: Implement the op + helpers**
+
+Widen the worker request union with the `"separate"` variant; in `onmessage`, branch: convert
+`meshGeometry` to a `THREE.Mesh` (same as the cut path), `separateComponents(M, mesh)`, `serializeAll(comps)`,
+delete every component, post `{ reqId, ok: true, components }` with the transfer list. Extract `serializeAll`
+and re-express the `cut`/`testfit` responses through it. In `cut-client.ts`, add `runSeparate` and the
+`submit` helper; re-express `runCut`/`runTestFit` through `submit`, mapping components via `deserialize`.
+Keep behavior identical.
+
+- [ ] **Step 4: Run — expect PASS** (new + all existing cut/cut-client tests)
+
+Run: `npx vitest run tests/cut/`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/workers/cut-worker.ts src/lib/cut/cut-client.ts tests/cut/cut-client.test.ts
+git commit -m "feat(separate): worker separate op + runSeparate — extract shared op serialize/submit helpers"
+```
+
+---
+
+### Task 19: Session reducer + `performSeparate`
+
+**Files:**
+- Modify: `src/lib/session.ts`, `src/hooks/useCutSession.ts`
+- Test: `tests/session.test.ts` (add)
+
+**Interfaces:**
+- `applySeparateResult(s, parentId, components: Array<{mesh; group}>, parentName): Session` — hides the
+  parent, adds one child part per component (`<parent>-1`, `<parent>-2`, …, `source: "cut"`, `parentId`,
+  fresh palette colors, `isDowel: false`), selects the first. Mirrors `applyCutResult` (session.ts:58) but
+  for N children and no dowels.
+- `performSeparate(partId)` in `useCutSession` — calls `runSeparate(part.mesh)`, then `push(applySeparateResult(...))`
+  with the same busy/error/history handling as `performCut` (useCutSession.ts:66).
+
+- [ ] **Step 1: Add a failing session test**
+
+```ts
+// tests/session.test.ts — add (follow the existing applyCutResult test style)
+it("applySeparateResult hides parent and adds one child per component", () => {
+  const s0 = /* import a part → session with parentId 'p0' (reuse the file's helper) */;
+  const comp = (v: number) => ({ mesh: new THREE.Mesh(new THREE.BoxGeometry(v, v, v)), group: new THREE.Group() });
+  const s1 = applySeparateResult(s0, "p0", [comp(2), comp(3)], "Body");
+  expect(s1.parts.get("p0")!.meta.visible).toBe(false);
+  const kids = [...s1.parts.values()].filter((p) => p.meta.parentId === "p0");
+  expect(kids.length).toBe(2);
+  expect(kids.map((k) => k.meta.name)).toEqual(["Body-1", "Body-2"]);
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL**
+
+Run: `npx vitest run tests/session.test.ts`
+
+- [ ] **Step 3: Implement `applySeparateResult` + `performSeparate`**
+
+Model `applySeparateResult` on `applyCutResult` (clone session, hide parent, loop components adding
+`${parentId}_c${i}` parts named `${parentName}-${i+1}`, `pickColor(next.parts.size)`, `countTris`). Add
+`performSeparate` to `useCutSession` mirroring `performCut`'s structure, returning early if the part has
+only one component (surface a friendly "already a single body" via the existing error/toast path).
+
+- [ ] **Step 4: Run — expect PASS**
+
+Run: `npx vitest run tests/session.test.ts`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/session.ts src/hooks/useCutSession.ts tests/session.test.ts
+git commit -m "feat(separate): applySeparateResult reducer + performSeparate session action"
+```
+
+---
+
+### Task 20: PartsTree action + App wiring
+
+**Files:**
+- Modify: `src/components/PartsTree.tsx`, `src/App.tsx`
+- Test: `tests/components/PartsTree.test.tsx` (add)
+
+**Interfaces:** PartsTree rows gain an optional `onSeparate?: (partId) => void`; App passes
+`session.performSeparate`. Show the action on non-dowel parts.
+
+- [ ] **Step 1: Add a failing UI test**
+
+```tsx
+// tests/components/PartsTree.test.tsx — excerpt, match existing harness
+it("calls onSeparate when the separate action is clicked", async () => {
+  const onSeparate = vi.fn();
+  render(<PartsTree {...baseProps} onSeparate={onSeparate} />);
+  await userEvent.click(screen.getAllByRole("button", { name: /separate/i })[0]);
+  expect(onSeparate).toHaveBeenCalled();
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL**
+
+Run: `npx vitest run tests/components/PartsTree.test.tsx`
+
+- [ ] **Step 3: Implement the action (Filament tokens)**
+
+Add an `onSeparate?: (partId: string) => void` prop and a small "Separate" button on each non-dowel row,
+styled with the existing PartsTree Filament token classes. Wire `onSeparate={session.performSeparate}` in
+`App.tsx`.
+
+- [ ] **Step 4: Run — expect PASS**
+
+Run: `npx vitest run tests/components/PartsTree.test.tsx`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/components/PartsTree.tsx src/App.tsx tests/components/PartsTree.test.tsx
+git commit -m "feat(separate): PartsTree separate action wired to performSeparate"
+```
+
+---
+
+### Task 21: M3a verification + smoke doc
+
+- [ ] **Step 1:** `npm run test && npm run typecheck` → PASS.
+- [ ] **Step 2:** `npm run build:web && npm run build` → both succeed.
+- [ ] **Step 3:** Write `docs/m3a-separate-caps-smoke-test.md` (existing style): import a multi-body STL,
+  Separate → N parts in the tree; confirm a plane cut's halves export watertight (open cleanly in a slicer).
+- [ ] **Step 4:** `git add docs/m3a-separate-caps-smoke-test.md && git commit -m "docs(m3a): separate + caps smoke checklist"`
+- [ ] **STOP — pause for user review before M3b.**
 
 ---
 
