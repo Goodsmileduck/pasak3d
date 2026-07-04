@@ -29,4 +29,11 @@ describe("CutPanel", () => {
     await userEvent.selectOptions(screen.getByLabelText(/joint polarity/i), "magnet");
     expect(onPolarity).toHaveBeenCalledWith("magnet");
   });
+
+  it("calls onConnectorChange when a connector is selected", async () => {
+    const onConnector = vi.fn();
+    render(<CutPanel {...baseProps} connectorId="cylinder" onConnectorChange={onConnector} />);
+    await userEvent.selectOptions(screen.getByLabelText(/connector/i), "dovetail");
+    expect(onConnector).toHaveBeenCalledWith("dovetail");
+  });
 });

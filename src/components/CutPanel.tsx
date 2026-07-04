@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import type { CutPlaneSpec, TolerancePreset, Dowel, JointShape, JointPolarity } from "../types";
 import { JOINT_SHAPES, JOINT_POLARITIES } from "../types";
+import { DEFAULT_CONNECTOR_ID, listByCategory } from "../lib/cut/connectors/registry";
+import type { ConnectorCategory } from "../lib/cut/connectors/types";
 
 /** "separate-peg" → "Separate peg" */
 const titleCase = (s: string): string =>
@@ -17,6 +19,8 @@ type Props = {
   onCut: (plane: CutPlaneSpec, dowels: Dowel[], tolerance: TolerancePreset) => void;
   onCancel: () => void;
   busy: boolean;
+  connectorId?: string;
+  onConnectorChange?: (id: string) => void;
   jointShape?: JointShape;
   onJointShapeChange?: (shape: JointShape) => void;
   jointPolarity?: JointPolarity;
@@ -32,6 +36,8 @@ export function CutPanel({
   onCut,
   onCancel,
   busy,
+  connectorId = DEFAULT_CONNECTOR_ID,
+  onConnectorChange,
   jointShape = "cylinder",
   onJointShapeChange,
   jointPolarity = "separate-peg",
@@ -46,6 +52,14 @@ export function CutPanel({
   const [dowelDiameter, setDowelDiameter] = useState(5);
   const [dowelLength, setDowelLength] = useState(20);
   const [tolerance, setTolerance] = useState<TolerancePreset>("pla-tight");
+  const [connectorCategory, setConnectorCategory] = useState<ConnectorCategory>("keyed");
+  const connectors = listByCategory(connectorCategory);
+  const selectedConnectorId = connectors.some((c) => c.id === connectorId)
+    ? connectorId
+    : connectors[0]?.id ?? "";
+
+  const shapeForConnector = (id: string, fallback: JointShape): JointShape =>
+    JOINT_SHAPES.includes(id as JointShape) ? id as JointShape : fallback;
 
   const buildPlane = (): CutPlaneSpec => {
     const normal: [number, number, number] = axis === "x" ? [1, 0, 0] : axis === "y" ? [0, 1, 0] : [0, 0, 1];
@@ -55,6 +69,7 @@ export function CutPanel({
   const buildAutoDowels = (
     shape: JointShape = jointShape,
     polarity: JointPolarity = jointPolarity,
+    connector: string = connectorId,
   ): Dowel[] => {
     return Array.from({ length: dowelCount }, (_, i) => ({
       id: `auto_${i}`,
@@ -68,6 +83,7 @@ export function CutPanel({
       length: dowelLength,
       source: "auto",
       shape,
+      connectorId: connector,
       polarity,
     }));
   };
@@ -76,9 +92,10 @@ export function CutPanel({
     handler: typeof onPreviewChange,
     shape: JointShape = jointShape,
     polarity: JointPolarity = jointPolarity,
+    connector: string = connectorId,
   ) => {
     const plane = buildPlane();
-    const dowels = buildAutoDowels(shape, polarity);
+    const dowels = buildAutoDowels(shape, polarity, connector);
     handler(plane, dowels, tolerance);
   };
 
@@ -117,6 +134,40 @@ export function CutPanel({
         <input type="number" min={2} max={20} step={0.5} value={dowelDiameter} onChange={(e) => { setDowelDiameter(+e.target.value); fire(onPreviewChange); }} className="w-full border border-[var(--border)] rounded px-2 py-1" />
         <label className="block text-xs mt-2">Length (mm)</label>
         <input type="number" min={5} max={100} value={dowelLength} onChange={(e) => { setDowelLength(+e.target.value); fire(onPreviewChange); }} className="w-full border border-[var(--border)] rounded px-2 py-1" />
+        <div className="mt-2">
+          <div className="flex rounded border border-[var(--border)] overflow-hidden">
+            {(["keyed", "snap"] as const).map((cat) => (
+              <button
+                key={cat}
+                type="button"
+                className={`flex-1 px-2 py-1 text-xs transition-colors ${connectorCategory === cat ? "bg-[var(--ink)] text-[var(--surface)]" : "bg-[var(--surface-2)] text-[var(--ink)] hover:bg-[var(--surface-3)]"}`}
+                onClick={() => setConnectorCategory(cat)}
+              >
+                {titleCase(cat)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <label className="block text-xs mt-2">Connector</label>
+        <select
+          aria-label="Connector"
+          value={selectedConnectorId}
+          disabled={connectors.length === 0}
+          onChange={(e) => {
+            const next = e.target.value;
+            const nextShape = shapeForConnector(next, jointShape);
+            onConnectorChange?.(next);
+            onJointShapeChange?.(nextShape);
+            fire(onPreviewChange, nextShape, jointPolarity, next);
+          }}
+          className="w-full border border-[var(--border)] rounded px-2 py-1 bg-[var(--surface)] text-[var(--ink)]"
+        >
+          {connectors.length === 0 ? (
+            <option value="">No connectors</option>
+          ) : connectors.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
         <label className="block text-xs mt-2">Shape</label>
         <select
           aria-label="Joint shape"
@@ -124,7 +175,8 @@ export function CutPanel({
           onChange={(e) => {
             const next = e.target.value as JointShape;
             onJointShapeChange?.(next);
-            fire(onPreviewChange, next, jointPolarity);
+            onConnectorChange?.(next);
+            fire(onPreviewChange, next, jointPolarity, next);
           }}
           className="w-full border border-[var(--border)] rounded px-2 py-1"
         >

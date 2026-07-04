@@ -20,6 +20,7 @@ import { useCutSession } from "./hooks/useCutSession";
 import { autoPlaceCutDowels } from "./lib/cut/auto-place-cut-dowels";
 import { runTestFit } from "./lib/cut/cut-client";
 import { TESTFIT_DEFAULTS } from "./lib/cut/test-fit";
+import { DEFAULT_CONNECTOR_ID } from "./lib/cut/connectors/registry";
 import { buildZipExport } from "./lib/exporters/zip-export";
 import { exportToMulti3MF } from "./lib/exporters/3mf";
 import { saveBytes } from "./lib/exporters/save";
@@ -36,6 +37,7 @@ import type {
   JointShape,
   JointPolarity,
 } from "./types";
+import { JOINT_SHAPES } from "./types";
 
 /** Read a file from disk via Tauri and feed it to the standard load pipeline. */
 async function loadFileFromPath(path: string, onFile: (f: File) => Promise<void>): Promise<void> {
@@ -61,6 +63,7 @@ export default function App() {
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [cutAxis, setCutAxis] = useState<"x" | "y" | "z">("x");
+  const [connectorId, setConnectorId] = useState(DEFAULT_CONNECTOR_ID);
   const [jointShape, setJointShape] = useState<JointShape>("cylinder");
   const [jointPolarity, setJointPolarity] = useState<JointPolarity>("separate-peg");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -166,13 +169,14 @@ export default function App() {
     setPreviewPlane(plane);
     const length = safeDowelLength(plane, dowelsHint[0]?.length ?? 20);
     const shape = dowelsHint[0]?.shape ?? jointShape;
+    const selectedConnectorId = dowelsHint[0]?.connectorId ?? connectorId;
     const polarity = dowelsHint[0]?.polarity ?? jointPolarity;
     const placed = autoPlaceCutDowels(activePart.mesh, plane, {
       count: dowelsHint.length,
       dowelDiameter: dowelsHint[0]?.diameter ?? 5,
       length,
       minSpacing: 2,
-    }).map((d) => ({ ...d, shape, polarity }));
+    }).map((d) => ({ ...d, shape, connectorId: selectedConnectorId, polarity }));
     // Replace auto dowels but preserve user-added manual ones.
     setPreviewDowels((prev) => [
       ...placed,
@@ -195,9 +199,17 @@ export default function App() {
         length,
         source: "manual",
         shape: sample?.shape ?? jointShape,
+        connectorId: sample?.connectorId ?? connectorId,
         polarity: sample?.polarity ?? jointPolarity,
       },
     ]);
+  };
+
+  const onConnectorChange = (id: string) => {
+    setConnectorId(id);
+    if (JOINT_SHAPES.includes(id as JointShape)) {
+      setJointShape(id as JointShape);
+    }
   };
 
   const onDeleteDowel = (id: string) => {
@@ -423,6 +435,8 @@ export default function App() {
               setPreviewDowels([]);
             }}
             busy={session.busy}
+            connectorId={connectorId}
+            onConnectorChange={onConnectorChange}
             jointShape={jointShape}
             onJointShapeChange={setJointShape}
             jointPolarity={jointPolarity}
