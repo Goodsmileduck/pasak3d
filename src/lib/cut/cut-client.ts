@@ -35,8 +35,55 @@ export async function runCut(
   dowels: Dowel[],
   tolerance: TolerancePreset,
 ): Promise<CutClientResult> {
-  const w = getWorker();
   const reqId = nextReqId++;
+  const { meshGeometry, transfer } = serializeMeshForWorker(mesh);
+
+  const req: CutWorkerRequest = {
+    reqId, op: "cut",
+    meshGeometry,
+    plane, dowels, tolerance,
+  };
+  return submit(req, transfer, (resp) => {
+    if (resp.ok && "partA" in resp) {
+      return {
+        partA: deserialize(resp.partA),
+        partB: deserialize(resp.partB),
+        dowelPieces: resp.dowelPieces.map(deserialize),
+      };
+    }
+    throw new Error("Unexpected test-fit response for cut request");
+  });
+}
+
+export async function runTestFit(opts: TestFitOpts): Promise<ExportItem[]> {
+  const reqId = nextReqId++;
+  const req: CutWorkerRequest = { reqId, op: "testfit", testfit: opts };
+
+  return submit(req, [], (resp) => {
+    if (resp.ok && "coupons" in resp) {
+      return resp.coupons.map((c) => ({ name: c.name, mesh: deserializeMesh(c.mesh) }));
+    }
+    throw new Error("Unexpected cut response for test-fit request");
+  });
+}
+
+export async function runSeparate(mesh: THREE.Mesh): Promise<THREE.Group[]> {
+  const reqId = nextReqId++;
+  const { meshGeometry, transfer } = serializeMeshForWorker(mesh);
+  const req: CutWorkerRequest = { reqId, op: "separate", meshGeometry };
+
+  return submit(req, transfer, (resp) => {
+    if (resp.ok && "components" in resp) {
+      return resp.components.map(deserialize);
+    }
+    throw new Error("Unexpected cut response for separate request");
+  });
+}
+
+function serializeMeshForWorker(mesh: THREE.Mesh): {
+  meshGeometry: { positions: Float32Array; indices: Uint32Array | null };
+  transfer: ArrayBuffer[];
+} {
   const geom = mesh.geometry as THREE.BufferGeometry;
   geom.applyMatrix4(mesh.matrixWorld);
   const indexed = geom.index ? geom : (geom as any).toNonIndexed();
@@ -44,53 +91,40 @@ export async function runCut(
   const indices = indexed.index
     ? new Uint32Array(indexed.index.array)
     : null;
-
-  const req: CutWorkerRequest = {
-    reqId, op: "cut",
-    meshGeometry: { positions, indices },
-    plane, dowels, tolerance,
-  };
   const transfer: ArrayBuffer[] = [positions.buffer];
   if (indices) transfer.push(indices.buffer);
-
-  return new Promise((resolve, reject) => {
-    pending.set(reqId, (resp) => {
-      if (resp.ok && "partA" in resp) {
-        resolve({
-          partA: deserialize(resp.partA),
-          partB: deserialize(resp.partB),
-          dowelPieces: resp.dowelPieces.map(deserialize),
-        });
-      } else if (!resp.ok) {
-        reject(new Error(resp.error));
-      } else {
-        reject(new Error("Unexpected test-fit response for cut request"));
-      }
-    });
-    w.postMessage(req, transfer);
-  });
+  return { meshGeometry: { positions, indices }, transfer };
 }
 
-export async function runTestFit(opts: TestFitOpts): Promise<ExportItem[]> {
+function submit<T>(
+  req: CutWorkerRequest,
+  transfer: ArrayBuffer[],
+  pick: (resp: Extract<CutWorkerResponse, { ok: true }>) => T,
+): Promise<T> {
   const w = getWorker();
-  const reqId = nextReqId++;
-  const req: CutWorkerRequest = { reqId, op: "testfit", testfit: opts };
-
   return new Promise((resolve, reject) => {
-    pending.set(reqId, (resp) => {
-      if (resp.ok && "coupons" in resp) {
-        resolve(resp.coupons.map((c) => ({ name: c.name, mesh: deserializeMesh(c.mesh) })));
-      } else if (!resp.ok) {
+    pending.set(req.reqId, (resp) => {
+      if (!resp.ok) {
         reject(new Error(resp.error));
-      } else {
-        reject(new Error("Unexpected cut response for test-fit request"));
+        return;
+      }
+      try {
+        resolve(pick(resp));
+      } catch (err) {
+        reject(err);
       }
     });
-    w.postMessage(req);
+    try {
+      if (transfer.length > 0) w.postMessage(req, transfer);
+      else w.postMessage(req);
+    } catch (err) {
+      pending.delete(req.reqId);
+      reject(err);
+    }
   });
 }
 
-function deserializeMesh(s: SerializedMesh): THREE.Mesh {
+export function deserializeMesh(s: SerializedMesh): THREE.Mesh {
   const geom = new THREE.BufferGeometry();
   geom.setAttribute("position", new THREE.BufferAttribute(s.positions, 3));
   geom.setIndex(new THREE.BufferAttribute(s.indices, 1));
@@ -104,7 +138,7 @@ function deserializeMesh(s: SerializedMesh): THREE.Mesh {
   return m;
 }
 
-function deserialize(s: SerializedMesh): THREE.Group {
+export function deserialize(s: SerializedMesh): THREE.Group {
   const g = new THREE.Group();
   g.add(deserializeMesh(s));
   return g;
