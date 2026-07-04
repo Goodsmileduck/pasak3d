@@ -1,5 +1,6 @@
 import { FontLoader, type Font } from "three/examples/jsm/loaders/FontLoader.js";
 import fontJson from "./helvetiker_regular.typeface.json";
+import { placeSolid } from "./orient";
 
 let cachedFont: Font | null = null;
 
@@ -35,5 +36,31 @@ export function buildSeamLabel(
   cs.delete();
   const out = centered.extrude(depth, 1, 0, undefined, false);
   centered.delete();
+  return out;
+}
+
+function shiftAlong(
+  p: [number, number, number],
+  a: [number, number, number],
+  d: number,
+): [number, number, number] {
+  return [p[0] + a[0] * d, p[1] + a[1] * d, p[2] + a[2] * d];
+}
+
+export function applySeamLabel(
+  M: any,
+  part: any,
+  text: string,
+  opts: { mode: "emboss" | "deboss"; size?: number; depth?: number },
+  position: [number, number, number],
+  axis: [number, number, number],
+): any {
+  const depth = opts.depth ?? 1;
+  const label = buildSeamLabel(M, text, { size: opts.size, depth });
+  const pos = opts.mode === "deboss" ? shiftAlong(position, axis, -depth) : position;
+  const placed = placeSolid(label, pos, axis);
+  label.delete();
+  const out = opts.mode === "emboss" ? M.Manifold.union(part, placed) : part.subtract(placed);
+  placed.delete();
   return out;
 }
