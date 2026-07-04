@@ -1,17 +1,51 @@
 import type { Joint, TolerancePreset } from "../../../types";
 import { applyJoints, type ApplyJointsResult } from "../joints/apply";
+import { placeSolid } from "../joints/orient";
 import { getConnector, isM1Shape } from "./registry";
+import { resolveConnectorParams, type Connector } from "./types";
+
+function applySeparatePiece(
+  M: any,
+  partA: any,
+  partB: any,
+  joints: Joint[],
+  connector: Connector,
+  preset: TolerancePreset,
+): ApplyJointsResult {
+  let outA = partA;
+  let outB = partB;
+  const jointPieces: any[] = [];
+
+  for (const j of joints) {
+    const p = resolveConnectorParams(j, preset);
+    const cavityLocal = connector.build.femaleCavity(M, p);
+    const cavity = placeSolid(cavityLocal, j.position, j.axis);
+    cavityLocal.delete();
+
+    const newA = outA.subtract(cavity);
+    const newB = outB.subtract(cavity);
+    if (outA !== partA) outA.delete();
+    if (outB !== partB) outB.delete();
+    outA = newA;
+    outB = newB;
+    cavity.delete();
+
+    const pieceLocal = connector.build.piece(M, p);
+    if (pieceLocal) {
+      jointPieces.push(placeSolid(pieceLocal, j.position, j.axis));
+      pieceLocal.delete();
+    }
+  }
+
+  return { partA: outA, partB: outB, jointPieces };
+}
 
 /**
  * Apply catalog connectors to a cut.
  *
- * P2-M1: every catalog connector is an M1 keyed shape, so this maps
- * `connectorId → joint.shape` and delegates to the proven `applyJoints`
- * (identical geometry, incl. polarity/magnet). When `connectorId` is present it
- * takes precedence over any explicit `joint.shape` (they're kept in lockstep by
- * the UI). New non-M1 connectors (P2-M2+) will branch here to consume the
- * connector's own `build.femaleCavity`/`piece`/`integralMale` — that surface is
- * deliberately unused until then.
+ * M1 catalog connectors still map `connectorId → joint.shape` and delegate to
+ * the proven `applyJoints` path. New keyed separate-piece connectors consume
+ * their own `build.femaleCavity`/`piece` surfaces here.
  */
 export function applyConnectors(
   M: any,
@@ -20,6 +54,12 @@ export function applyConnectors(
   joints: Joint[],
   preset: TolerancePreset,
 ): ApplyJointsResult {
+  const id = joints.find((j) => j.connectorId)?.connectorId;
+  if (id && !isM1Shape(id)) {
+    const connector = getConnector(id);
+    if (connector) return applySeparatePiece(M, partA, partB, joints, connector, preset);
+  }
+
   const mapped = joints.map((j) => {
     if (!j.connectorId) return j;
     const c = getConnector(j.connectorId);

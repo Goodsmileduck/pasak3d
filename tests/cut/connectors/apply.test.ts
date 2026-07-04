@@ -44,4 +44,41 @@ describe("applyConnectors", () => {
       });
     },
   );
+
+  it("t-slot connector subtracts from both halves and emits one piece", () => {
+    const j = {
+      id: "j",
+      position: [0, 0, 0],
+      axis: [0, 0, 1] as [number, number, number],
+      diameter: 8,
+      length: 12,
+      source: "auto" as const,
+      connectorId: "t-slot",
+    };
+    const a = box();
+    const b = box();
+    const r = applyConnectors(M, a, b, [j], "pla-tight");
+    expect(r.partA.status()).toBe("NoError");
+    expect(r.partA.volume()).toBeLessThan(30 * 30 * 30);
+    expect(r.partB.volume()).toBeLessThan(30 * 30 * 30);
+    expect(r.jointPieces.length).toBe(1);
+    expect(r.jointPieces[0].volume()).toBeLessThan(500);
+    r.partA.delete();
+    r.partB.delete();
+    r.jointPieces.forEach((p: any) => p.delete());
+    a.delete();
+    b.delete();
+  });
+
+  it("M1 shapes still delegate unchanged after adding the generic path", () => {
+    const j = { ...joint, connectorId: "cube" };
+    const viaConnector = applyConnectors(M, box(), box(), [j], "pla-tight");
+    const viaShape = applyJoints(M, box(), box(), [{ ...joint, shape: "cube" as const }], "pla-tight");
+    expect(viaConnector.partA.volume()).toBeCloseTo(viaShape.partA.volume(), 3);
+    [viaConnector, viaShape].forEach((r) => {
+      r.partA.delete();
+      r.partB.delete();
+      r.jointPieces.forEach((p: any) => p.delete());
+    });
+  });
 });
