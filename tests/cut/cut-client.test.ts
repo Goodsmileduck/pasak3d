@@ -185,4 +185,16 @@ describe("cut pipeline (in-process equivalent of worker)", () => {
     expect(res.dowelPieces.length).toBe(1);
     vi.unstubAllGlobals();
   });
+
+  it("runs a cut with the t-slot connector and returns parts + one piece", async () => {
+    vi.stubGlobal("Worker", CutClientWorker);
+    const cubeMesh = new THREE.Mesh(new THREE.BoxGeometry(20, 20, 20));
+    const plane = { normal: [0, 0, 1] as [number, number, number], constant: 0, axisSnap: "z" as const };
+    const res = await runCut(cubeMesh, plane, [
+      { id: "j", position: [0, 0, 0], axis: [0, 0, 1], diameter: 8, length: 8, source: "auto", connectorId: "t-slot" },
+    ], "pla-tight");
+    expect(res.partA).toBeDefined();
+    expect(res.dowelPieces.length).toBe(1);
+    vi.unstubAllGlobals();
+  });
 });
