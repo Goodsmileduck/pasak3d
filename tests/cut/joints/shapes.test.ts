@@ -52,4 +52,23 @@ describe("buildJointSolid", () => {
     expect(s.isEmpty()).toBe(false);
     s.delete();
   });
+
+  // Regression: the female cutter must clear the peg by `grow` on EVERY face, not
+  // just the arm ends. Baking grow into per-shape dimensions gave only grow/3
+  // (cross bar faces) / grow/2 (puzzle neck). A peg shifted by ~grow across those
+  // faces must still fit entirely inside the hole (peg - hole == empty).
+  it.each(["cross", "puzzle", "dovetail"] as const)(
+    "%s female clears the peg by ~grow on the narrow faces",
+    (shape) => {
+      const grow = 0.2;
+      const peg = buildJointSolid(M, { shape, diameter: 6, length: 10 });
+      const hole = buildJointSolid(M, { shape, diameter: 6, length: 10, grow });
+      // Shift the peg 0.9*grow along +Y (across a bar/neck face); a uniform grow
+      // clearance keeps it inside the hole, an under-clearanced face pokes out.
+      const shifted = peg.translate([0, 0.9 * grow, 0]);
+      const leftover = shifted.subtract(hole);
+      expect(leftover.isEmpty()).toBe(true);
+      peg.delete(); hole.delete(); shifted.delete(); leftover.delete();
+    },
+  );
 });
