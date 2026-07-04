@@ -177,7 +177,7 @@ describe("cut pipeline (in-process equivalent of worker)", () => {
   it("runs a cut with a connectorId and returns parts + one piece", async () => {
     vi.stubGlobal("Worker", CutClientWorker);
     const cubeMesh = new THREE.Mesh(new THREE.BoxGeometry(10, 10, 10));
-    const plane = { normal: [0, 0, 1], constant: 0, axisSnap: "z" } as const;
+    const plane = { normal: [0, 0, 1] as [number, number, number], constant: 0, axisSnap: "z" as const };
     const res = await runCut(cubeMesh, plane, [
       { id: "j", position: [0, 0, 0], axis: [0, 0, 1], diameter: 4, length: 8, source: "auto", connectorId: "cube" },
     ], "pla-tight");
