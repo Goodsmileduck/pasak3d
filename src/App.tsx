@@ -393,6 +393,7 @@ export default function App() {
               setPreviewDowels([]);
             }}
             onToggleVisible={session.togglePartVisible}
+            onSeparate={session.performSeparate}
           />
         )}
         {showCutPanel && bbox && (

@@ -6,9 +6,10 @@ type Props = {
   selectedId: PartId | null;
   onSelect: (id: PartId) => void;
   onToggleVisible: (id: PartId, visible: boolean) => void;
+  onSeparate?: (id: PartId) => void;
 };
 
-export function PartsTree({ parts, selectedId, onSelect, onToggleVisible }: Props) {
+export function PartsTree({ parts, selectedId, onSelect, onToggleVisible, onSeparate }: Props) {
   const roots = parts.filter((p) => p.meta.parentId === null && !p.isDowel);
   const dowels = parts.filter((p) => p.isDowel);
 
@@ -28,8 +29,20 @@ export function PartsTree({ parts, selectedId, onSelect, onToggleVisible }: Prop
             onClick={(e) => e.stopPropagation()}
           />
           <span className="w-2 h-2 rounded-full" style={{ background: part.meta.color }} />
-          <span className="text-sm">{part.meta.name}</span>
+          <span className="text-sm min-w-0 truncate">{part.meta.name}</span>
           <span className="text-xs text-[var(--ink-faint)] ml-auto">{Math.round(part.meta.triCount)}</span>
+          {onSeparate && !part.isDowel && (
+            <button
+              type="button"
+              className="rounded border border-[var(--border)] bg-[var(--surface)] px-1.5 py-0.5 text-[11px] text-[var(--ink-muted)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSeparate(part.id);
+              }}
+            >
+              Separate
+            </button>
+          )}
         </div>
         {children.map((c) => renderNode(c, depth + 1))}
       </div>
