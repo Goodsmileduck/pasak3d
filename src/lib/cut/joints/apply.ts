@@ -21,6 +21,47 @@ export function applyJoints(
     const polarity = j.polarity ?? "separate-peg";
     const clearance = resolveClearance(j, preset);
 
+    if (polarity === "magnet") {
+      const depth = j.length;
+      const axis = j.axis;
+      const cutALocal = buildJointSolid(M, {
+        shape, diameter: j.diameter, length: depth, taper: j.taper, grow: clearance,
+      });
+      const cutBLocal = buildJointSolid(M, {
+        shape, diameter: j.diameter, length: depth, taper: j.taper, grow: clearance,
+      });
+      const cutA = placeSolid(
+        cutALocal,
+        [
+          j.position[0] + axis[0] * depth / 2,
+          j.position[1] + axis[1] * depth / 2,
+          j.position[2] + axis[2] * depth / 2,
+        ],
+        axis,
+      );
+      const cutB = placeSolid(
+        cutBLocal,
+        [
+          j.position[0] - axis[0] * depth / 2,
+          j.position[1] - axis[1] * depth / 2,
+          j.position[2] - axis[2] * depth / 2,
+        ],
+        axis,
+      );
+      cutALocal.delete();
+      cutBLocal.delete();
+
+      const newA = outA.subtract(cutA);
+      const newB = outB.subtract(cutB);
+      if (outA !== partA) outA.delete();
+      if (outB !== partB) outB.delete();
+      outA = newA;
+      outB = newB;
+      cutA.delete();
+      cutB.delete();
+      continue;
+    }
+
     const cutterLocal = buildJointSolid(M, {
       shape, diameter: j.diameter, length: j.length, taper: j.taper, grow: clearance,
     });
