@@ -4,6 +4,7 @@ import {
   emptySession,
   importPart,
   applyCutResult,
+  applySeparateResult,
   setVisible,
   selectPart,
   setPrinter,
@@ -45,6 +46,18 @@ describe("session reducer", () => {
     expect(s.parts.get(r.partId)?.meta.visible).toBe(false);
     expect(s.parts.size).toBe(4); // root + A + B + dowel
     expect(s.selectedPartId).toBe(`${r.partId}_a`);
+  });
+
+  it("applySeparateResult hides parent and adds one child per component", () => {
+    let s = emptySession();
+    const root = makeMesh();
+    const r = importPart(s, root.mesh, root.group, "Body");
+    s = r.session;
+    const s1 = applySeparateResult(s, r.partId, [makeMesh(), makeMesh()], "Body");
+    expect(s1.parts.get(r.partId)!.meta.visible).toBe(false);
+    const kids = [...s1.parts.values()].filter((p) => p.meta.parentId === r.partId);
+    expect(kids.length).toBe(2);
+    expect(kids.map((k) => k.meta.name)).toEqual(["Body-1", "Body-2"]);
   });
 
   it("setVisible toggles", () => {

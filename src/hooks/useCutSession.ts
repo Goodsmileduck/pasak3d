@@ -1,13 +1,14 @@
 import { useCallback, useState } from "react";
 import * as THREE from "three";
 import type { Dowel, CutPlaneSpec, TolerancePreset, ModelData, PartId, PrinterPreset } from "../types";
-import { runCut } from "../lib/cut/cut-client";
+import { runCut, runSeparate } from "../lib/cut/cut-client";
 import { autoPlaceCutDowels } from "../lib/cut/auto-place-cut-dowels";
 import { centerOnXY } from "../lib/scene";
 import {
   emptySession,
   importPart,
   applyCutResult,
+  applySeparateResult,
   setVisible,
   selectPart,
   setPrinter as setPrinterReducer,
@@ -86,6 +87,31 @@ export function useCutSession() {
           { partA: a, partB: b, dowelPieces: dps },
           target.meta.name,
         );
+        syncSessionColors(next);
+        push(next);
+      } catch (e: any) {
+        setError(e?.message ?? String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [session, push],
+  );
+
+  const performSeparate = useCallback(
+    async (partId: PartId) => {
+      const target = session.parts.get(partId);
+      if (!target) return;
+      setBusy(true);
+      setError(null);
+      try {
+        const groups = await runSeparate(target.mesh);
+        if (groups.length <= 1) throw new Error("This part is already a single body.");
+        const components = groups
+          .map(firstMeshAndGroup)
+          .filter((x): x is { mesh: THREE.Mesh; group: THREE.Group } => !!x);
+        if (components.length <= 1) throw new Error("Separate produced fewer than two parts.");
+        const next = applySeparateResult(session, partId, components, target.meta.name);
         syncSessionColors(next);
         push(next);
       } catch (e: any) {
@@ -190,6 +216,7 @@ export function useCutSession() {
     error,
     loadModel,
     performCut,
+    performSeparate,
     performCutsSequential,
     undo,
     redo,

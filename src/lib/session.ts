@@ -124,6 +124,40 @@ export function applyCutResult(
   return next;
 }
 
+export function applySeparateResult(
+  s: Session,
+  parentId: PartId,
+  components: Array<{ mesh: THREE.Mesh; group: THREE.Group }>,
+  parentName: string,
+): Session {
+  const next = cloneSession(s);
+  const parent = next.parts.get(parentId);
+  if (!parent) throw new Error("Parent part missing");
+  parent.meta = { ...parent.meta, visible: false };
+
+  components.forEach((component, i) => {
+    const id = `${parentId}_c${i}`;
+    next.parts.set(id, {
+      id,
+      mesh: component.mesh,
+      group: component.group,
+      isDowel: false,
+      meta: {
+        id,
+        name: `${parentName}-${i + 1}`,
+        source: "cut",
+        parentId,
+        cutId: null,
+        visible: true,
+        color: pickColor(next.parts.size),
+        triCount: countTris(component.mesh),
+      },
+    });
+  });
+  next.selectedPartId = components.length > 0 ? `${parentId}_c0` : parentId;
+  return next;
+}
+
 export function setVisible(s: Session, partId: PartId, visible: boolean): Session {
   const next = cloneSession(s);
   const part = next.parts.get(partId);
