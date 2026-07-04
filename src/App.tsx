@@ -25,7 +25,15 @@ import { suggestCuts } from "./lib/cut/fit-to-printer";
 import { applyAutoOrient } from "./lib/cut/auto-orient";
 import { fitsInPrinter, dimensionsFromBBox } from "./lib/printer-presets";
 import { isDesktop, basename } from "./lib/platform";
-import type { ModelData, CutPlaneSpec, Dowel, TolerancePreset, PartId } from "./types";
+import type {
+  ModelData,
+  CutPlaneSpec,
+  Dowel,
+  TolerancePreset,
+  PartId,
+  JointShape,
+  JointPolarity,
+} from "./types";
 
 /** Read a file from disk via Tauri and feed it to the standard load pipeline. */
 async function loadFileFromPath(path: string, onFile: (f: File) => Promise<void>): Promise<void> {
@@ -51,6 +59,8 @@ export default function App() {
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [cutAxis, setCutAxis] = useState<"x" | "y" | "z">("x");
+  const [jointShape, setJointShape] = useState<JointShape>("cylinder");
+  const [jointPolarity, setJointPolarity] = useState<JointPolarity>("separate-peg");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const update = useAutoUpdate();
   const { isDark, toggleTheme } = useTheme();
@@ -153,12 +163,14 @@ export default function App() {
     if (!activePart) return;
     setPreviewPlane(plane);
     const length = safeDowelLength(plane, dowelsHint[0]?.length ?? 20);
+    const shape = dowelsHint[0]?.shape ?? jointShape;
+    const polarity = dowelsHint[0]?.polarity ?? jointPolarity;
     const placed = autoPlaceCutDowels(activePart.mesh, plane, {
       count: dowelsHint.length,
       dowelDiameter: dowelsHint[0]?.diameter ?? 5,
       length,
       minSpacing: 2,
-    });
+    }).map((d) => ({ ...d, shape, polarity }));
     // Replace auto dowels but preserve user-added manual ones.
     setPreviewDowels((prev) => [
       ...placed,
@@ -180,6 +192,8 @@ export default function App() {
         diameter: sample?.diameter ?? 5,
         length,
         source: "manual",
+        shape: sample?.shape ?? jointShape,
+        polarity: sample?.polarity ?? jointPolarity,
       },
     ]);
   };
@@ -381,6 +395,10 @@ export default function App() {
               setPreviewDowels([]);
             }}
             busy={session.busy}
+            jointShape={jointShape}
+            onJointShapeChange={setJointShape}
+            jointPolarity={jointPolarity}
+            onJointPolarityChange={setJointPolarity}
           />
         )}
         <div className="flex-1 relative">

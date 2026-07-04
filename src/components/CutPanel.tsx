@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { CutPlaneSpec, TolerancePreset, Dowel } from "../types";
+import type { CutPlaneSpec, TolerancePreset, Dowel, JointShape, JointPolarity } from "../types";
 import { TOLERANCE_VALUES } from "../types";
 
 type Props = {
@@ -12,9 +12,26 @@ type Props = {
   onCut: (plane: CutPlaneSpec, dowels: Dowel[], tolerance: TolerancePreset) => void;
   onCancel: () => void;
   busy: boolean;
+  jointShape?: JointShape;
+  onJointShapeChange?: (shape: JointShape) => void;
+  jointPolarity?: JointPolarity;
+  onJointPolarityChange?: (polarity: JointPolarity) => void;
 };
 
-export function CutPanel({ bboxMin, bboxMax, axis, onAxisChange, onPreviewChange, onCut, onCancel, busy }: Props) {
+export function CutPanel({
+  bboxMin,
+  bboxMax,
+  axis,
+  onAxisChange,
+  onPreviewChange,
+  onCut,
+  onCancel,
+  busy,
+  jointShape = "cylinder",
+  onJointShapeChange,
+  jointPolarity = "separate-peg",
+  onJointPolarityChange,
+}: Props) {
   const axisIdx = axis === "x" ? 0 : axis === "y" ? 1 : 2;
   const min = bboxMin[axisIdx];
   const max = bboxMax[axisIdx];
@@ -30,7 +47,10 @@ export function CutPanel({ bboxMin, bboxMax, axis, onAxisChange, onPreviewChange
     return { normal, constant: position, axisSnap: axis };
   };
 
-  const buildAutoDowels = (): Dowel[] => {
+  const buildAutoDowels = (
+    shape: JointShape = jointShape,
+    polarity: JointPolarity = jointPolarity,
+  ): Dowel[] => {
     return Array.from({ length: dowelCount }, (_, i) => ({
       id: `auto_${i}`,
       position: [
@@ -42,12 +62,18 @@ export function CutPanel({ bboxMin, bboxMax, axis, onAxisChange, onPreviewChange
       diameter: dowelDiameter,
       length: dowelLength,
       source: "auto",
+      shape,
+      polarity,
     }));
   };
 
-  const fire = (handler: typeof onPreviewChange) => {
+  const fire = (
+    handler: typeof onPreviewChange,
+    shape: JointShape = jointShape,
+    polarity: JointPolarity = jointPolarity,
+  ) => {
     const plane = buildPlane();
-    const dowels = buildAutoDowels();
+    const dowels = buildAutoDowels(shape, polarity);
     handler(plane, dowels, tolerance);
   };
 
@@ -86,6 +112,39 @@ export function CutPanel({ bboxMin, bboxMax, axis, onAxisChange, onPreviewChange
         <input type="number" min={2} max={20} step={0.5} value={dowelDiameter} onChange={(e) => { setDowelDiameter(+e.target.value); fire(onPreviewChange); }} className="w-full border border-[var(--border)] rounded px-2 py-1" />
         <label className="block text-xs mt-2">Length (mm)</label>
         <input type="number" min={5} max={100} value={dowelLength} onChange={(e) => { setDowelLength(+e.target.value); fire(onPreviewChange); }} className="w-full border border-[var(--border)] rounded px-2 py-1" />
+        <label className="block text-xs mt-2">Shape</label>
+        <select
+          aria-label="Joint shape"
+          value={jointShape}
+          onChange={(e) => {
+            const next = e.target.value as JointShape;
+            onJointShapeChange?.(next);
+            fire(onPreviewChange, next, jointPolarity);
+          }}
+          className="w-full bg-[var(--surface)] text-[var(--ink)] border border-[var(--border)] rounded px-2 py-1"
+        >
+          <option value="cylinder">Cylinder</option>
+          <option value="cube">Cube</option>
+          <option value="cross">Cross</option>
+          <option value="dovetail">Dovetail</option>
+          <option value="puzzle">Puzzle</option>
+        </select>
+        <label className="block text-xs mt-2">Polarity</label>
+        <select
+          aria-label="Joint polarity"
+          value={jointPolarity}
+          onChange={(e) => {
+            const next = e.target.value as JointPolarity;
+            onJointPolarityChange?.(next);
+            fire(onPreviewChange, jointShape, next);
+          }}
+          className="w-full bg-[var(--surface)] text-[var(--ink)] border border-[var(--border)] rounded px-2 py-1"
+        >
+          <option value="separate-peg">Separate peg</option>
+          <option value="male">Male</option>
+          <option value="female">Female</option>
+          <option value="magnet">Magnet</option>
+        </select>
         <p className="text-[11px] text-[var(--ink-muted)] mt-2 leading-snug">
           Click the cut plane to add a dowel · drag to move · × to remove
         </p>
