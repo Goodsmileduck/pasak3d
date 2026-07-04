@@ -71,9 +71,23 @@ export type Joint = {
 /** Back-compat alias - existing code referencing `Dowel` keeps working. */
 export type Dowel = Joint;
 
+/** Selectable joint shapes / polarities, in UI order. */
+export const JOINT_SHAPES: JointShape[] = ["cylinder", "cube", "cross", "dovetail", "puzzle"];
+export const JOINT_POLARITIES: JointPolarity[] = ["separate-peg", "male", "female", "magnet"];
+
 /** Radial clearance for a joint: per-joint override, else the tolerance preset. */
 export function resolveClearance(joint: Joint, preset: TolerancePreset): number {
   return joint.clearance ?? TOLERANCE_VALUES[preset];
+}
+
+/** Joint shape with the legacy-dowel default applied. */
+export function resolveShape(joint: Joint): JointShape {
+  return joint.shape ?? "cylinder";
+}
+
+/** Joint polarity with the legacy-dowel default applied. */
+export function resolvePolarity(joint: Joint): JointPolarity {
+  return joint.polarity ?? "separate-peg";
 }
 
 export type CutPlaneSpec = {

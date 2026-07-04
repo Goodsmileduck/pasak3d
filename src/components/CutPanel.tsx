@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
 import type { CutPlaneSpec, TolerancePreset, Dowel, JointShape, JointPolarity } from "../types";
+import { JOINT_SHAPES, JOINT_POLARITIES } from "../types";
+
+/** "separate-peg" → "Separate peg" */
+const titleCase = (s: string): string =>
+  s.replace(/-/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 import { TOLERANCE_VALUES } from "../types";
 
 type Props = {
@@ -121,13 +126,11 @@ export function CutPanel({
             onJointShapeChange?.(next);
             fire(onPreviewChange, next, jointPolarity);
           }}
-          className="w-full bg-[var(--surface)] text-[var(--ink)] border border-[var(--border)] rounded px-2 py-1"
+          className="w-full border border-[var(--border)] rounded px-2 py-1"
         >
-          <option value="cylinder">Cylinder</option>
-          <option value="cube">Cube</option>
-          <option value="cross">Cross</option>
-          <option value="dovetail">Dovetail</option>
-          <option value="puzzle">Puzzle</option>
+          {JOINT_SHAPES.map((s) => (
+            <option key={s} value={s}>{titleCase(s)}</option>
+          ))}
         </select>
         <label className="block text-xs mt-2">Polarity</label>
         <select
@@ -138,12 +141,11 @@ export function CutPanel({
             onJointPolarityChange?.(next);
             fire(onPreviewChange, jointShape, next);
           }}
-          className="w-full bg-[var(--surface)] text-[var(--ink)] border border-[var(--border)] rounded px-2 py-1"
+          className="w-full border border-[var(--border)] rounded px-2 py-1"
         >
-          <option value="separate-peg">Separate peg</option>
-          <option value="male">Male</option>
-          <option value="female">Female</option>
-          <option value="magnet">Magnet</option>
+          {JOINT_POLARITIES.map((p) => (
+            <option key={p} value={p}>{titleCase(p)}</option>
+          ))}
         </select>
         <p className="text-[11px] text-[var(--ink-muted)] mt-2 leading-snug">
           Click the cut plane to add a dowel · drag to move · × to remove

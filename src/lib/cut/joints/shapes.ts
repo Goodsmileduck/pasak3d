@@ -1,4 +1,6 @@
-import type { JointShape } from "../../../types";
+import type { Joint, JointShape } from "../../../types";
+import { resolveShape } from "../../../types";
+import { placeSolid } from "./orient";
 
 export type BuildJointOpts = {
   shape: JointShape;
@@ -43,9 +45,10 @@ export function buildJointSolid(M: any, opts: BuildJointOpts): any {
       return out;
     }
     case "puzzle": {
-      const r = diameter / 2 + grow;
       const neck = M.CrossSection.square([r, diameter + 2 * grow], true);
-      const lobe = M.CrossSection.circle(r, 64).translate([r * 0.9, 0]);
+      const circle = M.CrossSection.circle(r, 64);
+      const lobe = circle.translate([r * 0.9, 0]);
+      circle.delete();
       const profile = neck.add(lobe);
       const out = profile.extrude(length, 1, 0, undefined, true);
       neck.delete(); lobe.delete(); profile.delete();
@@ -54,4 +57,22 @@ export function buildJointSolid(M: any, opts: BuildJointOpts): any {
     default:
       throw new Error(`buildJointSolid: shape ${shape} not implemented yet`);
   }
+}
+
+/**
+ * The printable joint piece (peg): the nominal solid (grow = 0), oriented to the
+ * joint's axis and positioned at its seam point. Shared by applyJoints and the
+ * legacy buildDowelPiece.
+ */
+export function buildJointPiece(M: any, j: Joint): any {
+  const local = buildJointSolid(M, {
+    shape: resolveShape(j),
+    diameter: j.diameter,
+    length: j.length,
+    taper: j.taper,
+    grow: 0,
+  });
+  const out = placeSolid(local, j.position, j.axis);
+  local.delete();
+  return out;
 }

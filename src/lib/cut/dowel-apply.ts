@@ -1,7 +1,6 @@
 import type { Dowel } from "../../types";
 import { applyJoints } from "./joints/apply";
-import { buildJointSolid } from "./joints/shapes";
-import { placeSolid } from "./joints/orient";
+import { buildJointPiece } from "./joints/shapes";
 
 export type ApplyDowelsResult = {
   partA: any;
@@ -33,14 +32,5 @@ export function applyDowels(
 }
 
 export function buildDowelPiece(M: any, d: Dowel): any {
-  const local = buildJointSolid(M, {
-    shape: d.shape ?? "cylinder",
-    diameter: d.diameter,
-    length: d.length,
-    taper: d.taper,
-    grow: 0,
-  });
-  const out = placeSolid(local, d.position, d.axis);
-  local.delete();
-  return out;
+  return buildJointPiece(M, d);
 }
