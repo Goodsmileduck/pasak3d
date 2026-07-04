@@ -99,7 +99,10 @@ export function applyCutResult(
   addChild(next, aId, `${parentName}-A`, output.partA, parentId, cutId);
   addChild(next, bId, `${parentName}-B`, output.partB, parentId, cutId);
   output.dowelPieces.forEach((dp, i) => {
-    const id = `${cutId}_d${i}`;
+    // Key by the (unique) parent id, not cutId: session.cuts never grows, so cutId
+    // is always "c1" and `${cutId}_d${i}` would collide across cuts, dropping earlier
+    // dowels from the parts Map.
+    const id = `${parentId}_d${i}`;
     next.parts.set(id, {
       id,
       mesh: dp.mesh,
@@ -107,7 +110,7 @@ export function applyCutResult(
       isDowel: true,
       meta: {
         id,
-        name: `Dowel ${cutId}-${i + 1}`,
+        name: `Dowel ${parentName}-${i + 1}`,
         source: "cut",
         parentId: null,
         cutId,

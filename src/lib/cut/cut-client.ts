@@ -107,7 +107,11 @@ function serializeMeshForWorker(mesh: THREE.Mesh): {
   meshGeometry: { positions: Float32Array; indices: Uint32Array | null };
   transfer: ArrayBuffer[];
 } {
-  const geom = mesh.geometry as THREE.BufferGeometry;
+  // Clone before baking matrixWorld — the session mesh may still be visible and
+  // reused (separate/label leave it in the tree) and its group can carry an
+  // explode/centering transform. Mutating it in place would permanently bake that
+  // offset into the shared geometry, which undo (aliased snapshots) can't recover.
+  const geom = (mesh.geometry as THREE.BufferGeometry).clone();
   geom.applyMatrix4(mesh.matrixWorld);
   const indexed = geom.index ? geom : (geom as any).toNonIndexed();
   const positions = new Float32Array(indexed.attributes.position.array);

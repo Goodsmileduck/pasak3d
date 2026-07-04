@@ -130,6 +130,21 @@ describe("cut pipeline (in-process equivalent of worker)", () => {
     vi.unstubAllGlobals();
   });
 
+  it("does not mutate the input mesh geometry when matrixWorld is non-identity", async () => {
+    vi.stubGlobal("Worker", CutClientWorker);
+    const a = new THREE.BoxGeometry(4, 4, 4);
+    const b = new THREE.BoxGeometry(4, 4, 4).translate(20, 0, 0);
+    const mesh = new THREE.Mesh(mergeGeometries([a, b]));
+    // Simulate a part carrying an explode / centering transform.
+    mesh.position.set(5, 6, 7);
+    mesh.updateMatrixWorld(true);
+    const before = Float32Array.from(mesh.geometry.attributes.position.array as Float32Array);
+    await runSeparate(mesh);
+    const after = mesh.geometry.attributes.position.array as Float32Array;
+    expect(Array.from(after)).toEqual(Array.from(before)); // geometry not baked in place
+    vi.unstubAllGlobals();
+  });
+
   it("runLabel returns a labeled mesh group", async () => {
     vi.stubGlobal("Worker", CutClientWorker);
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(30, 30, 30));
