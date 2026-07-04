@@ -18,6 +18,7 @@ import { useTheme } from "./hooks/useTheme";
 import { loadModel } from "./lib/loaders";
 import { useCutSession } from "./hooks/useCutSession";
 import { autoPlaceCutDowels } from "./lib/cut/auto-place-cut-dowels";
+import { runTestFit } from "./lib/cut/cut-client";
 import { buildZipExport } from "./lib/exporters/zip-export";
 import { exportToMulti3MF } from "./lib/exporters/3mf";
 import { saveBytes } from "./lib/exporters/save";
@@ -224,6 +225,25 @@ export default function App() {
     setShowExportDialog(true);
   };
 
+  const onTestFit = useCallback(async () => {
+    try {
+      setError(null);
+      const items = await runTestFit({
+        count: 4,
+        step: 0.05,
+        baseClearance: 0.1,
+        cubeSize: 12,
+        keyDepth: 5,
+        keyWidth: 6,
+        shape: jointShape,
+      });
+      const bytes = buildZipExport(items, []);
+      await saveBytes("pasak-testfit.zip", "application/zip", bytes);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [jointShape]);
+
   const performExport = async (opts: ExportOptions) => {
     const exportableParts = session.partsArray.filter((p) => p.meta.source === "cut");
     if (exportableParts.length === 0) return;
@@ -348,6 +368,7 @@ export default function App() {
       <Toolbar
         onOpen={handleOpen}
         onExport={onExport}
+        onTestFit={onTestFit}
         canExport={hasCutParts}
         onUndo={session.undo}
         onRedo={session.redo}
