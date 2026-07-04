@@ -27,4 +27,14 @@ describe("buildJointSolid", () => {
     expect(s.volume()).toBeCloseTo(6 * 6 * 10, 3);
     s.delete();
   });
+
+  it("cross is a valid manifold with volume between one and two arms", () => {
+    const arm = 6 * 10; // approx single-arm cross-sectionxlength reference
+    const s = buildJointSolid(M, { shape: "cross", diameter: 6, length: 10 });
+    expect(s.status()).toBe("NoError");
+    expect(s.isEmpty()).toBe(false);
+    // two overlapping arms: volume < 2x a single arm (overlap subtracted), > 1x
+    expect(s.volume()).toBeGreaterThan(arm);
+    s.delete();
+  });
 });

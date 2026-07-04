@@ -21,6 +21,15 @@ export function buildJointSolid(M: any, opts: BuildJointOpts): any {
       const x = diameter + 2 * grow;
       return M.Manifold.cube([x, x, length], true);
     }
+    case "cross": {
+      const arm = diameter + 2 * grow;
+      const barW = arm / 3;
+      const a = M.Manifold.cube([arm, barW, length], true);
+      const b = M.Manifold.cube([barW, arm, length], true);
+      const out = a.add(b);
+      a.delete(); b.delete();
+      return out;
+    }
     default:
       throw new Error(`buildJointSolid: shape ${shape} not implemented yet`);
   }
