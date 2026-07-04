@@ -502,25 +502,301 @@ git commit -m "feat(connectors): catalog picker in cut panel — category + conn
 
 ---
 
-# P2-M2 — Keyed catalog (outline)
+# P2-M2 — Keyed catalog (T-slot + generic apply path)
 
-Expand to full TDD detail after P2-M1 review. Locked interfaces:
+Deliverable: the first non-M1 catalog connector — a **T-slot** — reachable end-to-end, plus the **generic
+separate-piece apply path** that runs a connector's own `build.femaleCavity`/`piece` (the stepping stone
+snap-fit needs in P2-M3). M1 shapes keep delegating to `applyJoints` (no re-plumbing, no regression risk);
+the catalog picker already lists new keyed connectors automatically from the registry.
 
-- **New `t-slot` connector** (`src/lib/cut/connectors/keyed/t-slot.ts`): a T cross-section built via two
-  `CrossSection` rectangles unioned (stem + cap), extruded; `femaleCavity` = profile `offset(clearance)`;
-  `piece` = nominal; separate-piece. Resists lateral pull-out.
-- **Formalize** dovetail-slide / puzzle-tab / cross-key / taper-pin as first-class keyed connectors (own
-  modules with tuned defaults + `describe`), replacing the generic m1-adapter entries for those ids while the
-  adapter keeps `cylinder`/`cube`. `applyConnectors` routes these through the generic separate-piece path
-  (subtract `femaleCavity` both halves, emit `piece`) instead of delegating to `applyJoints`.
-- **Generic separate-piece apply path** in `connectors/apply.ts`: for a non-delegated connector, subtract
-  `build.femaleCavity` (placed via `placeSolid`) from both halves and emit `build.piece`. Reuses
-  `orient.ts` `placeSolid`/`shiftAlong`.
-- Tests `tests/cut/connectors/keyed/*`: each connector's cavity > piece by clearance; t-slot resists a
-  lateral shift (piece shifted along the slot still `subtract(cavity).isEmpty()`, shifted across does not).
-- Tasks: (1) generic separate-piece path in applyConnectors + test; (2) t-slot + test; (3) dovetail-slide
-  module + test; (4) puzzle-tab/cross-key/taper-pin modules + tests; (5) registry wiring + UI options;
-  (6) verify + `docs/p2-m2-keyed-catalog-smoke-test.md`; STOP.
+**Scope note (YAGNI):** we do NOT re-plumb the existing M1 shapes (cross/dovetail/puzzle) through the generic
+path — the adapter already exposes them and delegation preserves their polarity/magnet behavior exactly.
+The generic path handles **separate-peg keyed** connectors only; polarity/magnet and the integral path arrive
+in P2-M3.
+
+**Assumption:** all placements in one cut share a `connectorId` (the UI sets one connector per cut, on both
+auto and manual dowels). `applyConnectors` dispatches on that single connector; mixed-connector cuts are not
+supported in Phase 2 (documented).
+
+## File structure (P2-M2)
+
+- Create `src/lib/cut/connectors/keyed/t-slot.ts` — `tSlotConnector: Connector`.
+- Modify `src/lib/cut/connectors/registry.ts` — add `tSlotConnector` to `ALL`.
+- Modify `src/lib/cut/connectors/apply.ts` — add the generic separate-piece path; dispatch M1-vs-catalog.
+- Tests: `tests/cut/connectors/keyed/t-slot.test.ts`, extend `tests/cut/connectors/apply.test.ts`,
+  `tests/cut/cut-client.test.ts`.
+
+---
+
+### Task 8: T-slot connector geometry
+
+**Files:**
+- Create: `src/lib/cut/connectors/keyed/t-slot.ts`
+- Test: `tests/cut/connectors/keyed/t-slot.test.ts`
+
+**Interfaces:**
+- Produces: `tSlotConnector: Connector` (id `"t-slot"`, keyed, separate-piece). `build.femaleCavity` = the T
+  profile grown by `clearance` (`CrossSection.offset`), extruded to `length`; `build.piece` = nominal T
+  extruded; `integralMale` = undefined.
+- Consumes: `Connector`/`ConnectorParams` (P2-M1 `types.ts`).
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/cut/connectors/keyed/t-slot.test.ts
+import { describe, it, expect, beforeAll } from "vitest";
+import { initManifold } from "../../../../src/lib/cut/manifold";
+import { tSlotConnector } from "../../../../src/lib/cut/connectors/keyed/t-slot";
+
+let M: any;
+beforeAll(async () => { M = await initManifold(); });
+
+const p = { size: 8, length: 12, clearance: 0.3 };
+
+describe("tSlotConnector", () => {
+  it("is a keyed separate-piece connector with the expected metadata", () => {
+    expect(tSlotConnector.id).toBe("t-slot");
+    expect(tSlotConnector.category).toBe("keyed");
+    expect(tSlotConnector.assembly).toBe("separate-piece");
+  });
+
+  it("piece is a valid T solid; cavity is larger by the clearance", () => {
+    const piece = tSlotConnector.build.piece(M, p)!;
+    const cavity = tSlotConnector.build.femaleCavity(M, p);
+    expect(piece.status()).toBe("NoError");
+    expect(piece.volume()).toBeGreaterThan(0);
+    expect(cavity.volume()).toBeGreaterThan(piece.volume());
+    piece.delete(); cavity.delete();
+  });
+
+  it("the piece cap is wider than its neck (a real T)", () => {
+    const piece = tSlotConnector.build.piece(M, { size: 8, length: 12, clearance: 0 })!;
+    // Cap occupies the bottom slab; neck the top. Slice bboxes: bottom half wider in X than top half.
+    const bb = piece.boundingBox(); // {min:[x,y,z], max:[x,y,z]} — verify accessor in manifold.d.ts
+    expect(bb.max[0] - bb.min[0]).toBeCloseTo(8, 1); // cap width == size
+    piece.delete();
+  });
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL** (`tSlotConnector` not defined)
+
+Run: `npx vitest run tests/cut/connectors/keyed/t-slot.test.ts`
+
+- [ ] **Step 3: Implement the T-slot**
+
+```ts
+// src/lib/cut/connectors/keyed/t-slot.ts
+import type { Connector, ConnectorParams } from "../types";
+
+/** Nominal T cross-section: a wide cap slab at the bottom + a narrower neck on top. */
+function tProfile(M: any, size: number): any {
+  const capW = size;
+  const capH = size / 3;
+  const neckW = size / 2.5;
+  const neckH = size - capH;
+  const cap = M.CrossSection.square([capW, capH], true).translate([0, -neckH / 2]);
+  const neck = M.CrossSection.square([neckW, neckH], true).translate([0, capH / 2]);
+  const out = cap.add(neck);
+  cap.delete(); neck.delete();
+  return out;
+}
+
+function extrudeT(M: any, size: number, length: number, grow: number): any {
+  const nominal = tProfile(M, size);
+  const profile = grow > 0 ? nominal.offset(grow, "Round", 2, 32) : nominal;
+  const out = profile.extrude(length, 1, 0, undefined, true);
+  if (profile !== nominal) profile.delete();
+  nominal.delete();
+  return out;
+}
+
+export const tSlotConnector: Connector = {
+  id: "t-slot",
+  name: "T-slot",
+  category: "keyed",
+  assembly: "separate-piece",
+  defaults: {},
+  describe: "T-slot — slides in, resists pull-out",
+  build: {
+    femaleCavity: (M: any, p: ConnectorParams) => extrudeT(M, p.size, p.length, p.clearance),
+    piece: (M: any, p: ConnectorParams) => extrudeT(M, p.size, p.length, 0),
+    integralMale: undefined,
+  },
+};
+```
+
+Verify `boundingBox()`/`Box` accessor names against `node_modules/manifold-3d/manifold.d.ts`; adapt the
+test's bbox read if the shape differs (`.min`/`.max` as `[x,y,z]`).
+
+- [ ] **Step 4: Run — expect PASS**
+
+Run: `npx vitest run tests/cut/connectors/keyed/t-slot.test.ts`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/cut/connectors/keyed/t-slot.ts tests/cut/connectors/keyed/t-slot.test.ts
+git commit -m "feat(connectors): T-slot connector geometry — cap + neck profile, offset cavity"
+```
+
+---
+
+### Task 9: Generic separate-piece apply path + register T-slot
+
+**Files:**
+- Modify: `src/lib/cut/connectors/apply.ts`
+- Modify: `src/lib/cut/connectors/registry.ts` (add `tSlotConnector` to `ALL`)
+- Test: `tests/cut/connectors/apply.test.ts` (add)
+
+**Interfaces:**
+- `applyConnectors` dispatches: if the cut's connector is an M1 shape (or absent) → delegate to `applyJoints`
+  (unchanged). Otherwise → `applySeparatePiece(M, partA, partB, joints, connector, preset)`: subtract
+  `connector.build.femaleCavity` (placed via `placeSolid`) from both halves, emit `connector.build.piece`.
+  Ownership mirrors `applyJoints` (does not delete the input `partA`/`partB`).
+
+- [ ] **Step 1: Add failing tests**
+
+```ts
+// tests/cut/connectors/apply.test.ts — add
+it("t-slot connector subtracts from both halves and emits one piece", () => {
+  const j = { id: "j", position: [0,0,0], axis: [0,0,1] as [number,number,number],
+    diameter: 8, length: 12, source: "auto" as const, connectorId: "t-slot" };
+  const a = box(), b = box();
+  const r = applyConnectors(M, a, b, [j], "pla-tight");
+  expect(r.partA.status()).toBe("NoError");
+  expect(r.partA.volume()).toBeLessThan(30*30*30);
+  expect(r.partB.volume()).toBeLessThan(30*30*30);
+  expect(r.jointPieces.length).toBe(1);
+  r.partA.delete(); r.partB.delete(); r.jointPieces.forEach((p: any) => p.delete());
+  a.delete(); b.delete();
+});
+
+it("M1 shapes still delegate unchanged after adding the generic path", () => {
+  const j = { ...joint, connectorId: "cube" };
+  const viaConnector = applyConnectors(M, box(), box(), [j], "pla-tight");
+  const viaShape = applyJoints(M, box(), box(), [{ ...joint, shape: "cube" as const }], "pla-tight");
+  expect(viaConnector.partA.volume()).toBeCloseTo(viaShape.partA.volume(), 3);
+  [viaConnector, viaShape].forEach((r) => { r.partA.delete(); r.partB.delete(); r.jointPieces.forEach((p: any) => p.delete()); });
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL** (t-slot not registered; generic path not implemented)
+
+Run: `npx vitest run tests/cut/connectors/apply.test.ts`
+
+- [ ] **Step 3: Implement the dispatch + generic path**
+
+In `registry.ts`: `import { tSlotConnector } from "./keyed/t-slot";` and add it to `ALL`
+(`const ALL = [...m1KeyedConnectors(), tSlotConnector];`). In `apply.ts`:
+
+```ts
+import { resolveConnectorParams } from "./types";
+import { placeSolid } from "../joints/orient";
+// … existing imports …
+
+function applySeparatePiece(
+  M: any, partA: any, partB: any, joints: Joint[], connector: NonNullable<ReturnType<typeof getConnector>>,
+  preset: TolerancePreset,
+): ApplyJointsResult {
+  let outA = partA, outB = partB;
+  const jointPieces: any[] = [];
+  for (const j of joints) {
+    const p = resolveConnectorParams(j, preset);
+    const cavity = placeSolid(connector.build.femaleCavity(M, p), j.position, j.axis);
+    const newA = outA.subtract(cavity), newB = outB.subtract(cavity);
+    if (outA !== partA) outA.delete();
+    if (outB !== partB) outB.delete();
+    outA = newA; outB = newB; cavity.delete();
+    const pieceLocal = connector.build.piece(M, p);
+    if (pieceLocal) { jointPieces.push(placeSolid(pieceLocal, j.position, j.axis)); pieceLocal.delete(); }
+  }
+  return { partA: outA, partB: outB, jointPieces };
+}
+
+export function applyConnectors(M, partA, partB, joints, preset): ApplyJointsResult {
+  const id = joints.find((j) => j.connectorId)?.connectorId;
+  if (id && !isM1Shape(id)) {
+    const c = getConnector(id);
+    if (c) return applySeparatePiece(M, partA, partB, joints, c, preset);
+  }
+  // M1 (or no) connector → delegate, mapping id→shape (unchanged from P2-M1).
+  const mapped = joints.map((j) => {
+    if (!j.connectorId) return j;
+    const c = getConnector(j.connectorId);
+    if (c && isM1Shape(c.id)) return { ...j, shape: c.id };
+    return j;
+  });
+  return applyJoints(M, partA, partB, mapped, preset);
+}
+```
+
+Note `placeSolid` deletes the local it wraps? No — `placeSolid` returns a new manifold and does NOT delete
+its input. So delete the local: capture it, place, delete. Rewrite the two `placeSolid(build.…(M,p), …)`
+calls to build-then-delete, e.g. `const local = connector.build.femaleCavity(M, p); const cavity =
+placeSolid(local, j.position, j.axis); local.delete();`.
+
+- [ ] **Step 4: Run — expect PASS** (new + all existing connector/joint tests)
+
+Run: `npx vitest run tests/cut/`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/cut/connectors/apply.ts src/lib/cut/connectors/registry.ts tests/cut/connectors/apply.test.ts
+git commit -m "feat(connectors): generic separate-piece apply path + register T-slot"
+```
+
+---
+
+### Task 10: End-to-end + P2-M2 verification + smoke doc
+
+**Files:**
+- Test: `tests/cut/cut-client.test.ts` (add a t-slot round-trip)
+
+- [ ] **Step 1: Add a failing end-to-end test**
+
+```ts
+// tests/cut/cut-client.test.ts — add (reuse the CutClientWorker stub + a cube mesh + plane)
+it("runs a cut with the t-slot connector and returns parts + one piece", async () => {
+  vi.stubGlobal("Worker", CutClientWorker);
+  const cubeMesh = new THREE.Mesh(new THREE.BoxGeometry(20, 20, 20));
+  const plane = { normal: [0, 0, 1] as [number, number, number], constant: 0, axisSnap: "z" as const };
+  const res = await runCut(cubeMesh, plane, [
+    { id: "j", position: [0,0,0], axis: [0,0,1], diameter: 8, length: 8, source: "auto", connectorId: "t-slot" },
+  ], "pla-tight");
+  expect(res.partA).toBeDefined();
+  expect(res.dowelPieces.length).toBe(1);
+  vi.unstubAllGlobals();
+});
+```
+
+- [ ] **Step 2: Run — expect PASS** (the worker stub already routes `cut` → `applyConnectors`; t-slot flows through)
+
+Run: `npx vitest run tests/cut/cut-client.test.ts`
+
+- [ ] **Step 3: Full verification**
+
+Run: `npm run test && npm run typecheck && npm run build:web && npm run build`
+Expected: all pass; both builds succeed.
+
+- [ ] **Step 4: Commit the test + write the smoke doc**
+
+```bash
+git add tests/cut/cut-client.test.ts
+git commit -m "test(connectors): t-slot end-to-end cut round-trip"
+```
+
+Write `docs/p2-m2-keyed-catalog-smoke-test.md` (existing style): pick T-slot from the Keyed catalog, cut,
+confirm two halves + a printed T-slot key export and the key slides into the sockets; confirm M1 shapes are
+unchanged.
+
+```bash
+git add docs/p2-m2-keyed-catalog-smoke-test.md
+git commit -m "docs(p2-m2): keyed-catalog (T-slot) smoke checklist"
+```
+
+- [ ] **STOP — pause for user review before P2-M3.**
 
 ---
 
