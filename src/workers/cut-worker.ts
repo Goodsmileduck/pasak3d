@@ -1,9 +1,8 @@
 import * as THREE from "three";
 import { initManifold } from "../lib/cut/manifold";
 import { planeCutMesh } from "../lib/cut/plane-cut";
-import { applyDowels } from "../lib/cut/dowel-apply";
-import type { CutPlaneSpec, Dowel, TolerancePreset } from "../types";
-import { TOLERANCE_VALUES } from "../types";
+import { applyJoints } from "../lib/cut/joints/apply";
+import type { CutPlaneSpec, Joint, TolerancePreset } from "../types";
 
 export type SerializedMesh = { positions: Float32Array; indices: Uint32Array };
 
@@ -12,7 +11,7 @@ export type CutWorkerRequest = {
   op: "cut";
   meshGeometry: { positions: Float32Array; indices: Uint32Array | null };
   plane: CutPlaneSpec;
-  dowels: Dowel[];
+  dowels: Joint[];
   tolerance: TolerancePreset;
 };
 
@@ -20,29 +19,40 @@ export type CutWorkerResponse =
   | { reqId: number; ok: true; partA: SerializedMesh; partB: SerializedMesh; dowelPieces: SerializedMesh[] }
   | { reqId: number; ok: false; error: string };
 
+let workerManifoldPromise: Promise<any> | null = null;
+
+function getWorkerManifold(): Promise<any> {
+  if (!workerManifoldPromise) {
+    workerManifoldPromise = initManifold().then((M) => {
+      M.setCircularSegments(128);
+      return M;
+    });
+  }
+  return workerManifoldPromise;
+}
+
 self.onmessage = async (e: MessageEvent<CutWorkerRequest>) => {
   const { reqId, plane, dowels, tolerance, meshGeometry } = e.data;
   try {
-    const M = await initManifold();
+    const M = await getWorkerManifold();
     const geom = new THREE.BufferGeometry();
     geom.setAttribute("position", new THREE.BufferAttribute(meshGeometry.positions, 3));
     if (meshGeometry.indices) geom.setIndex(new THREE.BufferAttribute(meshGeometry.indices, 1));
     const mesh = new THREE.Mesh(geom);
 
     const cut = await planeCutMesh(M, mesh, plane);
-    const tolValue = TOLERANCE_VALUES[tolerance];
-    const result = applyDowels(M, cut.partA.manifold, cut.partB.manifold, dowels, tolValue);
+    const result = applyJoints(M, cut.partA.manifold, cut.partB.manifold, dowels, tolerance);
 
     const partA = serialize(result.partA);
     const partB = serialize(result.partB);
-    const dowelPieces = result.dowelPieces.map(serialize);
+    const dowelPieces = result.jointPieces.map(serialize);
 
-    // Cleanup: input manifolds may have been replaced by applyDowels
+    // Cleanup: input manifolds may have been replaced by applyJoints.
     if (result.partA !== cut.partA.manifold) cut.partA.manifold.delete();
     if (result.partB !== cut.partB.manifold) cut.partB.manifold.delete();
     result.partA.delete();
     result.partB.delete();
-    for (const p of result.dowelPieces) p.delete();
+    for (const p of result.jointPieces) p.delete();
 
     const transfer: ArrayBuffer[] = [
       partA.positions.buffer as ArrayBuffer, partA.indices.buffer as ArrayBuffer,

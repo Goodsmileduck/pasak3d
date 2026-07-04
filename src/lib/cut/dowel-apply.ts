@@ -1,4 +1,6 @@
 import type { Dowel } from "../../types";
+import { applyJoints } from "./joints/apply";
+import { buildJointSolid } from "./joints/shapes";
 import { placeSolid } from "./joints/orient";
 
 export type ApplyDowelsResult = {
@@ -20,36 +22,25 @@ export function applyDowels(
   dowels: Dowel[],
   tolerance: number,
 ): ApplyDowelsResult {
-  let outA = partA;
-  let outB = partB;
-  const dowelPieces: any[] = [];
-
-  for (const d of dowels) {
-    const hole = buildCylinder(M, d.diameter / 2 + tolerance, d.length, d.position, d.axis);
-    const newA = outA.subtract(hole);
-    const newB = outB.subtract(hole);
-    if (outA !== partA) outA.delete();
-    if (outB !== partB) outB.delete();
-    outA = newA;
-    outB = newB;
-    hole.delete();
-    dowelPieces.push(buildDowelPiece(M, d));
-  }
-  return { partA: outA, partB: outB, dowelPieces };
-}
-
-function buildCylinder(
-  M: any,
-  radius: number,
-  length: number,
-  position: [number, number, number],
-  axis: [number, number, number],
-): any {
-  // Create cylinder centered on Z axis
-  const cyl = M.Manifold.cylinder(length, radius, radius, 128, true);
-  return placeSolid(cyl, position, axis);
+  const result = applyJoints(
+    M,
+    partA,
+    partB,
+    dowels.map((d) => ({ ...d, clearance: d.clearance ?? tolerance })),
+    "pla-tight",
+  );
+  return { partA: result.partA, partB: result.partB, dowelPieces: result.jointPieces };
 }
 
 export function buildDowelPiece(M: any, d: Dowel): any {
-  return buildCylinder(M, d.diameter / 2, d.length, d.position, d.axis);
+  const local = buildJointSolid(M, {
+    shape: d.shape ?? "cylinder",
+    diameter: d.diameter,
+    length: d.length,
+    taper: d.taper,
+    grow: 0,
+  });
+  const out = placeSolid(local, d.position, d.axis);
+  local.delete();
+  return out;
 }

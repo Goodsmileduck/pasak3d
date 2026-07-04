@@ -27,4 +27,24 @@ describe("cut pipeline (in-process equivalent of worker)", () => {
     result.partB.delete();
     for (const p of result.dowelPieces) p.delete();
   });
+
+  it("runs a cut with a cube joint and returns parts + one peg", async () => {
+    const M = await initManifold();
+    const geom = new THREE.BoxGeometry(10, 10, 10);
+    const mesh = new THREE.Mesh(geom);
+    const cut = await planeCutMesh(M, mesh, { normal: [0, 0, 1], constant: 0, axisSnap: "z" });
+    const result = applyDowels(M, cut.partA.manifold, cut.partB.manifold, [{
+      id: "j", position: [0, 0, 0], axis: [0, 0, 1], diameter: 4, length: 8,
+      source: "auto", shape: "cube", polarity: "separate-peg",
+    }], 0.10);
+    expect(result.partA).toBeDefined();
+    expect(result.dowelPieces.length).toBe(1);
+    expect(result.dowelPieces[0].volume()).toBeCloseTo(4 * 4 * 8, 3);
+
+    if (result.partA !== cut.partA.manifold) cut.partA.manifold.delete();
+    if (result.partB !== cut.partB.manifold) cut.partB.manifold.delete();
+    result.partA.delete();
+    result.partB.delete();
+    for (const p of result.dowelPieces) p.delete();
+  });
 });
