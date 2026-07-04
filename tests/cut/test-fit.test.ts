@@ -22,10 +22,10 @@ describe("generateTestFitPairs", () => {
     p.male.delete(); p.female.delete();
   });
 
-  it("names encode shape, clearance and A/B", () => {
+  it("names encode index, shape, clearance and A/B (index prevents label collisions)", () => {
     const p = generateTestFitPairs(M, base)[0];
-    expect(p.maleName).toBe("testfit_cylinder_c0.10_A.stl");
-    expect(p.femaleName).toBe("testfit_cylinder_c0.10_B.stl");
+    expect(p.maleName).toBe("testfit_00_cylinder_c0.10_A.stl");
+    expect(p.femaleName).toBe("testfit_00_cylinder_c0.10_B.stl");
     p.male.delete(); p.female.delete();
   });
 

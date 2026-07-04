@@ -1,6 +1,5 @@
 import { JOINT_SHAPES, type JointShape } from "../../types";
 import { buildJointSolid } from "./joints/shapes";
-import { placeSolid } from "./joints/orient";
 
 export type TestFitOpts = {
   count: number; step: number; baseClearance: number;
@@ -14,31 +13,41 @@ export type TestFitPair = {
   female: any; femaleName: string;
 };
 
-const AXIS: [number, number, number] = [0, 0, 1];
+/** Sensible coupon defaults (base 0.10 → 0.25mm sweep); callers override `shape`. */
+export const TESTFIT_DEFAULTS = {
+  count: 4, step: 0.05, baseClearance: 0.1,
+  cubeSize: 12, keyDepth: 5, keyWidth: 6,
+} as const;
+
+/**
+ * One coupon block: a centered cube with the joint solid seated at the top face
+ * (half in / half proud), then combined — `.add` for the male key, `.subtract`
+ * for the female socket. The joint extrudes along +Z, so a plain translate seats
+ * it (no rotation needed).
+ */
+function buildCoupon(
+  M: any, shape: JointShape, o: TestFitOpts, grow: number,
+  combine: (block: any, solid: any) => any,
+): any {
+  const block = M.Manifold.cube([o.cubeSize, o.cubeSize, o.cubeSize], true);
+  const solid = buildJointSolid(M, { shape, diameter: o.keyWidth, length: o.keyDepth * 2, grow })
+    .translate([0, 0, o.cubeSize / 2]);
+  const out = combine(block, solid);
+  block.delete(); solid.delete();
+  return out;
+}
 
 /** One coupon pair: a block with a protruding key (A) and a block with the socket (B). */
-function buildPair(M: any, shape: JointShape, o: TestFitOpts, clearance: number): TestFitPair {
-  const top: [number, number, number] = [0, 0, o.cubeSize / 2];
-  // Key spans the top face: half into the block, half proud of it.
-  const keyLen = o.keyDepth * 2;
-
-  const blockA = M.Manifold.cube([o.cubeSize, o.cubeSize, o.cubeSize], true);
-  const pegLocal = buildJointSolid(M, { shape, diameter: o.keyWidth, length: keyLen, grow: 0 });
-  const peg = placeSolid(pegLocal, top, AXIS);
-  const male = blockA.add(peg);
-  blockA.delete(); pegLocal.delete(); peg.delete();
-
-  const blockB = M.Manifold.cube([o.cubeSize, o.cubeSize, o.cubeSize], true);
-  const holeLocal = buildJointSolid(M, { shape, diameter: o.keyWidth, length: keyLen, grow: clearance });
-  const hole = placeSolid(holeLocal, top, AXIS);
-  const female = blockB.subtract(hole);
-  blockB.delete(); holeLocal.delete(); hole.delete();
-
-  const c = clearance.toFixed(2);
+function buildPair(M: any, shape: JointShape, o: TestFitOpts, clearance: number, index: number): TestFitPair {
+  const male = buildCoupon(M, shape, o, 0, (b, s) => b.add(s));
+  const female = buildCoupon(M, shape, o, clearance, (b, s) => b.subtract(s));
+  // Prefix with the sweep index so distinct steps never collide in the zip even
+  // if their clearances round to the same 2-decimal label.
+  const tag = `${String(index).padStart(2, "0")}_${shape}_c${clearance.toFixed(2)}`;
   return {
     clearance, shape, male, female,
-    maleName: `testfit_${shape}_c${c}_A.stl`,
-    femaleName: `testfit_${shape}_c${c}_B.stl`,
+    maleName: `testfit_${tag}_A.stl`,
+    femaleName: `testfit_${tag}_B.stl`,
   };
 }
 
@@ -47,7 +56,7 @@ export function generateTestFitPairs(M: any, opts: TestFitOpts): TestFitPair[] {
   for (let i = 0; i < opts.count; i++) {
     const clearance = opts.baseClearance + i * opts.step;
     const shape = opts.shuffleShapes ? JOINT_SHAPES[i % JOINT_SHAPES.length] : opts.shape;
-    pairs.push(buildPair(M, shape, opts, clearance));
+    pairs.push(buildPair(M, shape, opts, clearance, i));
   }
   return pairs;
 }

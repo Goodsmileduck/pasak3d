@@ -90,7 +90,7 @@ export async function runTestFit(opts: TestFitOpts): Promise<ExportItem[]> {
   });
 }
 
-function deserialize(s: SerializedMesh): THREE.Group {
+function deserializeMesh(s: SerializedMesh): THREE.Mesh {
   const geom = new THREE.BufferGeometry();
   geom.setAttribute("position", new THREE.BufferAttribute(s.positions, 3));
   geom.setIndex(new THREE.BufferAttribute(s.indices, 1));
@@ -101,11 +101,11 @@ function deserialize(s: SerializedMesh): THREE.Group {
   const m = new THREE.Mesh(geom, createModelMaterial(0xcccccc));
   m.castShadow = true;
   m.receiveShadow = true;
-  const g = new THREE.Group();
-  g.add(m);
-  return g;
+  return m;
 }
 
-function deserializeMesh(s: SerializedMesh): THREE.Mesh {
-  return deserialize(s).children[0] as THREE.Mesh;
+function deserialize(s: SerializedMesh): THREE.Group {
+  const g = new THREE.Group();
+  g.add(deserializeMesh(s));
+  return g;
 }
