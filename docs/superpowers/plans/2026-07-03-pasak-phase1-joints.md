@@ -819,20 +819,327 @@ git commit -m "docs(m1): joint-system smoke test checklist"
 
 ---
 
-# MILESTONE 2 — Test-fit generator + tolerance presets (outline)
+# MILESTONE 2 — Test-fit generator + tolerance presets
 
-Expand to full TDD detail after M1 review. Locked interfaces:
+Deliverable: from a shape + clearance sweep, generate small printable coupon pairs (a block with a
+protruding key + a block with the matching socket) and download them as a zip, so a user prints the
+sweep and keeps the clearance that fits. Geometry runs in the worker (needs `M`); the generator returns
+Manifolds the worker serializes, exactly like the cut path.
 
-- **Create `src/lib/cut/test-fit.ts`** (pure): `generateTestFitPairs(M, opts): { meshes: SerializedMesh[]; names: string[] }`
-  where `opts = { count; step; cubeSize; keyDepth; keyWidth; shape: JointShape; baseClearance; shuffleShapes? }`.
-  Emits `count` male+female coupon block pairs; pair *i* uses clearance `baseClearance + i*step`; reuses
-  `buildJointSolid` (male `grow:0`, female `grow:clearance`) subtracted from small cube blocks.
-- **Tests** `tests/cut/test-fit.test.ts`: pair count = `count`; clearance sweep is monotonic; female block
-  hole volume grows with `i`; names like `testfit_<shape>_c0.15_(A|B).stl`.
-- **Export path**: feed `meshes` into the existing `exporters/zip-export` (grouped) — new toolbar action
-  "Generate test-fit coupons" (behind an export-menu item). No scene mutation.
-- Tasks (bite-sized): (1) `generateTestFitPairs` cube-block male/female + test; (2) clearance sweep + naming + test;
-  (3) shuffle option + test; (4) export wiring + toolbar action + component test; (5) M2 verify + `docs/m2-testfit-smoke-test.md`; STOP.
+## File structure (M2)
+
+- Create `src/lib/cut/test-fit.ts` — `generateTestFitPairs(M, opts)` (pure geometry, returns Manifolds).
+- Modify `src/workers/cut-worker.ts` — add op `"testfit"`; serialize + delete the returned Manifolds.
+- Modify `src/lib/cut/cut-client.ts` — add `runTestFit(opts)` (worker bridge, hydrates to `THREE.Mesh`).
+- Modify `src/App.tsx` + `src/components/Toolbar.tsx` — "Test-fit coupons" action → `runTestFit` →
+  `buildZipExport` → `saveBytes`.
+- Tests: `tests/cut/test-fit.test.ts`, `tests/cut/cut-client.test.ts` (add a `runTestFit` case).
+
+---
+
+### Task 12: `generateTestFitPairs` — one coupon pair per clearance
+
+**Files:**
+- Create: `src/lib/cut/test-fit.ts`
+- Test: `tests/cut/test-fit.test.ts` (create)
+
+**Interfaces:**
+- Produces:
+  ```ts
+  export type TestFitOpts = {
+    count: number; step: number; baseClearance: number;   // clearance_i = baseClearance + i*step
+    cubeSize: number; keyDepth: number; keyWidth: number;  // mm
+    shape: JointShape; shuffleShapes?: boolean;
+  };
+  export type TestFitPair = {
+    clearance: number; shape: JointShape;
+    male: any; maleName: string;      // Manifolds (caller serializes + deletes)
+    female: any; femaleName: string;
+  };
+  export function generateTestFitPairs(M: any, opts: TestFitOpts): TestFitPair[];
+  ```
+- Consumes: `buildJointSolid` (shapes.ts), `placeSolid` (orient.ts).
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/cut/test-fit.test.ts
+import { describe, it, expect, beforeAll } from "vitest";
+import { initManifold } from "../../src/lib/cut/manifold";
+import { generateTestFitPairs } from "../../src/lib/cut/test-fit";
+
+let M: any;
+beforeAll(async () => { M = await initManifold(); });
+
+const base = { count: 1, step: 0.05, baseClearance: 0.1, cubeSize: 12, keyDepth: 5, keyWidth: 6, shape: "cylinder" as const };
+
+describe("generateTestFitPairs", () => {
+  it("emits one male+female coupon for count=1", () => {
+    const pairs = generateTestFitPairs(M, base);
+    expect(pairs.length).toBe(1);
+    const p = pairs[0];
+    expect(p.male.status()).toBe("NoError");
+    expect(p.female.status()).toBe("NoError");
+    // male block + protruding key ⇒ more than a bare block; female block − socket ⇒ less.
+    const block = M.Manifold.cube([12, 12, 12], true);
+    expect(p.male.volume()).toBeGreaterThan(block.volume());
+    expect(p.female.volume()).toBeLessThan(block.volume());
+    block.delete();
+    p.male.delete(); p.female.delete();
+  });
+
+  it("names encode shape, clearance and A/B", () => {
+    const p = generateTestFitPairs(M, base)[0];
+    expect(p.maleName).toBe("testfit_cylinder_c0.10_A.stl");
+    expect(p.femaleName).toBe("testfit_cylinder_c0.10_B.stl");
+    p.male.delete(); p.female.delete();
+  });
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL** (`generateTestFitPairs` not defined)
+
+Run: `npx vitest run tests/cut/test-fit.test.ts`
+
+- [ ] **Step 3: Implement the single-pair core**
+
+```ts
+// src/lib/cut/test-fit.ts
+import type { JointShape } from "../../types";
+import { buildJointSolid } from "./joints/shapes";
+import { placeSolid } from "./joints/orient";
+
+export type TestFitOpts = {
+  count: number; step: number; baseClearance: number;
+  cubeSize: number; keyDepth: number; keyWidth: number;
+  shape: JointShape; shuffleShapes?: boolean;
+};
+export type TestFitPair = {
+  clearance: number; shape: JointShape;
+  male: any; maleName: string;
+  female: any; femaleName: string;
+};
+
+const AXIS: [number, number, number] = [0, 0, 1];
+
+/** One coupon pair: a block with a protruding key (A) and a block with the socket (B). */
+function buildPair(M: any, shape: JointShape, o: TestFitOpts, clearance: number): TestFitPair {
+  const top: [number, number, number] = [0, 0, o.cubeSize / 2];
+  // Key spans the top face: half into the block, half proud of it.
+  const keyLen = o.keyDepth * 2;
+
+  const blockA = M.Manifold.cube([o.cubeSize, o.cubeSize, o.cubeSize], true);
+  const peg = placeSolid(buildJointSolid(M, { shape, diameter: o.keyWidth, length: keyLen, grow: 0 }), top, AXIS);
+  const male = blockA.add(peg);
+  blockA.delete(); peg.delete();
+
+  const blockB = M.Manifold.cube([o.cubeSize, o.cubeSize, o.cubeSize], true);
+  const hole = placeSolid(buildJointSolid(M, { shape, diameter: o.keyWidth, length: keyLen, grow: clearance }), top, AXIS);
+  const female = blockB.subtract(hole);
+  blockB.delete(); hole.delete();
+
+  const c = clearance.toFixed(2);
+  return {
+    clearance, shape, male, female,
+    maleName: `testfit_${shape}_c${c}_A.stl`,
+    femaleName: `testfit_${shape}_c${c}_B.stl`,
+  };
+}
+
+export function generateTestFitPairs(M: any, opts: TestFitOpts): TestFitPair[] {
+  const pairs: TestFitPair[] = [];
+  for (let i = 0; i < opts.count; i++) {
+    const clearance = opts.baseClearance + i * opts.step;
+    pairs.push(buildPair(M, opts.shape, opts, clearance));
+  }
+  return pairs;
+}
+```
+
+- [ ] **Step 4: Run — expect PASS**
+
+Run: `npx vitest run tests/cut/test-fit.test.ts`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/cut/test-fit.ts tests/cut/test-fit.test.ts
+git commit -m "feat(testfit): coupon pair generator — key block + socket block per clearance"
+```
+
+---
+
+### Task 13: Clearance sweep + shuffle
+
+**Files:**
+- Modify: `src/lib/cut/test-fit.ts`
+- Test: `tests/cut/test-fit.test.ts` (add cases)
+
+**Interfaces:** `count > 1` produces a monotonic clearance sweep; `shuffleShapes` cycles the shape per pair.
+
+- [ ] **Step 1: Add failing tests**
+
+```ts
+it("sweeps clearance monotonically and the socket grows with clearance", () => {
+  const pairs = generateTestFitPairs(M, { ...base, count: 3, step: 0.1, baseClearance: 0.1 });
+  expect(pairs.map((p) => p.clearance)).toEqual([0.1, 0.2, 0.3].map((v) => expect.closeTo(v, 5)));
+  // Bigger clearance ⇒ bigger socket ⇒ less material in the female block.
+  expect(pairs[2].female.volume()).toBeLessThan(pairs[0].female.volume());
+  pairs.forEach((p) => { p.male.delete(); p.female.delete(); });
+});
+
+it("shuffleShapes cycles through the shape catalog per pair", () => {
+  const pairs = generateTestFitPairs(M, { ...base, count: 3, shuffleShapes: true });
+  const shapes = new Set(pairs.map((p) => p.shape));
+  expect(shapes.size).toBeGreaterThan(1);
+  pairs.forEach((p) => { p.male.delete(); p.female.delete(); });
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL**
+
+- [ ] **Step 3: Implement sweep shape selection**
+
+Replace the loop body in `generateTestFitPairs` to pick the shape per pair:
+
+```ts
+import { JOINT_SHAPES } from "../../types";
+// …
+export function generateTestFitPairs(M: any, opts: TestFitOpts): TestFitPair[] {
+  const pairs: TestFitPair[] = [];
+  for (let i = 0; i < opts.count; i++) {
+    const clearance = opts.baseClearance + i * opts.step;
+    const shape = opts.shuffleShapes ? JOINT_SHAPES[i % JOINT_SHAPES.length] : opts.shape;
+    pairs.push(buildPair(M, shape, opts, clearance));
+  }
+  return pairs;
+}
+```
+
+- [ ] **Step 4: Run — expect PASS**
+
+Run: `npx vitest run tests/cut/test-fit.test.ts`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/cut/test-fit.ts tests/cut/test-fit.test.ts
+git commit -m "feat(testfit): clearance sweep + shuffle-shapes option"
+```
+
+---
+
+### Task 14: Worker op + client bridge
+
+**Files:**
+- Modify: `src/workers/cut-worker.ts`
+- Modify: `src/lib/cut/cut-client.ts`
+- Test: `tests/cut/cut-client.test.ts` (add a `runTestFit` case)
+
+**Interfaces:**
+- Worker request gains `{ op: "testfit"; testfit: TestFitOpts }`; response
+  `{ ok: true; coupons: { name: string; mesh: SerializedMesh }[] }`.
+- `cut-client.ts` exports `runTestFit(opts: TestFitOpts): Promise<ExportItem[]>` (each `ExportItem` =
+  `{ name, mesh: THREE.Mesh }`, matching `zip-export.ts`).
+
+- [ ] **Step 1: Add a failing client test**
+
+```ts
+// tests/cut/cut-client.test.ts — add
+it("runTestFit returns hydrated coupon meshes named A/B", async () => {
+  const items = await runTestFit({
+    count: 2, step: 0.05, baseClearance: 0.1, cubeSize: 12, keyDepth: 5, keyWidth: 6, shape: "cylinder",
+  });
+  expect(items.length).toBe(4); // 2 pairs × (A + B)
+  expect(items.some((i) => i.name.endsWith("_A.stl"))).toBe(true);
+  expect(items.some((i) => i.name.endsWith("_B.stl"))).toBe(true);
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL** (`runTestFit` not exported)
+
+Run: `npx vitest run tests/cut/cut-client.test.ts`
+
+- [ ] **Step 3: Implement the worker op + client bridge**
+
+In `cut-worker.ts`: widen the request union with `{ reqId; op: "testfit"; testfit: TestFitOpts }`. In
+`onmessage`, branch on `op`: for `"testfit"`, `const pairs = generateTestFitPairs(M, testfit);` then flatten
+to coupons, serialize each Manifold with the existing `serialize()` helper, delete every Manifold, and post
+`{ reqId, ok: true, coupons }` transferring the buffers. Import `generateTestFitPairs` + `TestFitOpts`.
+
+In `cut-client.ts`: add `runTestFit(opts)` mirroring `runCut` — post `{ op: "testfit", testfit: opts }`,
+and in the resolver map `resp.coupons` to `ExportItem[]` by hydrating each `SerializedMesh` via the existing
+`deserialize` helper (unwrap the group's mesh: `deserialize(c.mesh).children[0] as THREE.Mesh`, or add a
+`deserializeMesh` that returns the `THREE.Mesh` directly). Keep `runCut` unchanged.
+
+- [ ] **Step 4: Run — expect PASS** (new + existing cut-client tests)
+
+Run: `npx vitest run tests/cut/cut-client.test.ts tests/cut/`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/workers/cut-worker.ts src/lib/cut/cut-client.ts tests/cut/cut-client.test.ts
+git commit -m "feat(testfit): worker op + runTestFit client bridge"
+```
+
+---
+
+### Task 15: Toolbar action + download wiring
+
+**Files:**
+- Modify: `src/components/Toolbar.tsx`
+- Modify: `src/App.tsx`
+- Test: `tests/components/Toolbar.test.tsx` (add — follow the existing harness)
+
+**Interfaces:** Toolbar gains `onTestFit: () => void`; App's `onTestFit` calls `runTestFit` with sensible
+defaults, `buildZipExport(items, [])`, then `saveBytes(bytes, "pasak-testfit.zip")`.
+
+- [ ] **Step 1: Add a failing Toolbar test**
+
+```tsx
+// tests/components/Toolbar.test.tsx — excerpt, match existing render harness
+it("calls onTestFit when the test-fit action is clicked", async () => {
+  const onTestFit = vi.fn();
+  render(<Toolbar {...baseProps} onTestFit={onTestFit} />);
+  await userEvent.click(screen.getByRole("button", { name: /test-fit/i }));
+  expect(onTestFit).toHaveBeenCalled();
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL**
+
+Run: `npx vitest run tests/components/Toolbar.test.tsx`
+
+- [ ] **Step 3: Implement the action (Filament tokens, no raw palette)**
+
+Add a `onTestFit: () => void` prop + a toolbar button labeled "Test-fit" (aria "Generate test-fit coupons"),
+styled with the existing Filament token classes used by the neighboring buttons. In `App.tsx` add
+`onTestFit` that calls `runTestFit({ count: 4, step: 0.05, baseClearance: 0.1, cubeSize: 12, keyDepth: 5,
+keyWidth: 6, shape: jointShape })`, then `saveBytes(buildZipExport(items, []), "pasak-testfit.zip")`; wire it
+to `<Toolbar onTestFit={onTestFit} />`. Use the current `jointShape` state as the default shape.
+
+- [ ] **Step 4: Run — expect PASS**
+
+Run: `npx vitest run tests/components/Toolbar.test.tsx`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/components/Toolbar.tsx src/App.tsx tests/components/Toolbar.test.tsx
+git commit -m "feat(testfit): toolbar action — generate + download coupon zip"
+```
+
+---
+
+### Task 16: M2 verification + smoke doc
+
+- [ ] **Step 1:** `npm run test && npm run typecheck` → PASS.
+- [ ] **Step 2:** `npm run build:web && npm run build` → both succeed.
+- [ ] **Step 3:** Write `docs/m2-testfit-smoke-test.md` (existing style): generate a cylinder sweep, print A/B
+  coupons, confirm the labeled zip opens in a slicer and clearances increase across the set.
+- [ ] **Step 4:** `git add docs/m2-testfit-smoke-test.md && git commit -m "docs(m2): test-fit smoke checklist"`
+- [ ] **STOP — pause for user review before M3a.**
 
 ---
 
