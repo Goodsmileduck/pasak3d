@@ -3,7 +3,7 @@ import { initManifold } from "../lib/cut/manifold";
 import { meshToManifold } from "../lib/cut/convert";
 import { planeCutMesh } from "../lib/cut/plane-cut";
 import { separateComponents } from "../lib/cut/separate";
-import { applyJoints } from "../lib/cut/joints/apply";
+import { applyConnectors } from "../lib/cut/connectors/apply";
 import { applySeamLabel } from "../lib/cut/joints/labels";
 import { generateTestFitPairs, type TestFitOpts } from "../lib/cut/test-fit";
 import type { CutPlaneSpec, Joint, TolerancePreset } from "../types";
@@ -118,12 +118,12 @@ self.onmessage = async (e: MessageEvent<CutWorkerRequest>) => {
     const { plane, dowels, tolerance } = e.data;
 
     const cut = await planeCutMesh(M, mesh, plane);
-    const result = applyJoints(M, cut.partA.manifold, cut.partB.manifold, dowels, tolerance);
+    const result = applyConnectors(M, cut.partA.manifold, cut.partB.manifold, dowels, tolerance);
 
     const { meshes, transfer } = serializeAll([result.partA, result.partB, ...result.jointPieces]);
     const [partA, partB, ...dowelPieces] = meshes;
 
-    // Cleanup: input manifolds may have been replaced by applyJoints.
+    // Cleanup: input manifolds may have been replaced by applyConnectors.
     if (result.partA !== cut.partA.manifold) cut.partA.manifold.delete();
     if (result.partB !== cut.partB.manifold) cut.partB.manifold.delete();
     result.partA.delete();
