@@ -48,14 +48,33 @@ export const TOLERANCE_VALUES: Record<TolerancePreset, number> = {
   "sla":       0.05,
 };
 
-export type Dowel = {
+export type JointShape = "cylinder" | "cube" | "cross" | "dovetail" | "puzzle";
+export type JointPolarity = "separate-peg" | "male" | "female" | "magnet";
+
+/**
+ * A joint placed on a cut seam. Superset of the former `Dowel`.
+ * Missing `shape`/`polarity` => legacy cylinder + separate-peg behavior.
+ */
+export type Joint = {
   id: string;
   position: [number, number, number]; // world-space, on the cut plane
   axis: [number, number, number];     // unit normal of the cut plane
-  diameter: number;                    // mm
-  length: number;                      // mm (extends symmetrically across plane)
+  diameter: number;                    // mm (nominal; drives radius / box size)
+  length: number;                      // mm
   source: "auto" | "manual";
+  shape?: JointShape;                  // default "cylinder"
+  polarity?: JointPolarity;            // default "separate-peg"
+  taper?: number;                      // 0..1 draft (0 = straight)
+  clearance?: number;                  // per-joint radial clearance override (mm)
 };
+
+/** Back-compat alias - existing code referencing `Dowel` keeps working. */
+export type Dowel = Joint;
+
+/** Radial clearance for a joint: per-joint override, else the tolerance preset. */
+export function resolveClearance(joint: Joint, preset: TolerancePreset): number {
+  return joint.clearance ?? TOLERANCE_VALUES[preset];
+}
 
 export type CutPlaneSpec = {
   normal: [number, number, number]; // unit vector
@@ -78,7 +97,7 @@ export type Cut = {
   id: CutId;
   partId: PartId;
   plane: CutPlaneSpec;
-  dowels: Dowel[];
+  dowels: Joint[];
   tolerance: TolerancePreset;
   resultPartIds: [PartId, PartId];
   createdAt: number;
