@@ -45,4 +45,11 @@ describe("buildJointSolid", () => {
     expect(s.volume()).toBeGreaterThan(0);
     s.delete();
   });
+
+  it("puzzle tab is a valid manifold (neck + lobe union)", () => {
+    const s = buildJointSolid(M, { shape: "puzzle", diameter: 6, length: 10 });
+    expect(s.status()).toBe("NoError");
+    expect(s.isEmpty()).toBe(false);
+    s.delete();
+  });
 });

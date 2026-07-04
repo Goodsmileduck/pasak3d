@@ -42,6 +42,15 @@ export function buildJointSolid(M: any, opts: BuildJointOpts): any {
       cs.delete();
       return out;
     }
+    case "puzzle": {
+      const r = diameter / 2 + grow;
+      const neck = M.CrossSection.square([r, diameter + 2 * grow], true);
+      const lobe = M.CrossSection.circle(r, 64).translate([r * 0.9, 0]);
+      const profile = neck.add(lobe);
+      const out = profile.extrude(length, 1, 0, undefined, true);
+      neck.delete(); lobe.delete(); profile.delete();
+      return out;
+    }
     default:
       throw new Error(`buildJointSolid: shape ${shape} not implemented yet`);
   }
