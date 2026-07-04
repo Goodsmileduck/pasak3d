@@ -1,17 +1,9 @@
 import type { Joint, TolerancePreset } from "../../../types";
 import { resolveClearance, resolvePolarity, resolveShape } from "../../../types";
 import { buildJointSolid, buildJointPiece } from "./shapes";
-import { placeSolid } from "./orient";
+import { placeSolid, shiftAlong } from "./orient";
 
 export type ApplyJointsResult = { partA: any; partB: any; jointPieces: any[] };
-
-function shiftAlong(
-  p: [number, number, number],
-  axis: [number, number, number],
-  d: number,
-): [number, number, number] {
-  return [p[0] + axis[0] * d, p[1] + axis[1] * d, p[2] + axis[2] * d];
-}
 
 export function applyJoints(
   M: any,

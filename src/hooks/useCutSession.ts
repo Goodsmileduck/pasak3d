@@ -147,6 +147,9 @@ export function useCutSession() {
         });
         const labeled = firstMeshAndGroup(group);
         if (!labeled) throw new Error("Label produced an empty part");
+        // The deserialized mesh carries a default gray material; keep the part's
+        // existing look (imported material or cut-part palette color) after labeling.
+        labeled.mesh.material = target.mesh.material;
         const next = applyLabelResult(session, partId, labeled);
         syncSessionColors(next);
         push(next);

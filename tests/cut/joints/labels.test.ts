@@ -21,7 +21,7 @@ describe("buildSeamLabel", () => {
     a.delete(); ab.delete();
   });
 
-  it("emboss adds volume, deboss removes volume on the top face", () => {
+  it("emboss adds a single fused body; deboss removes volume", () => {
     const mk = () => M.Manifold.cube([30, 30, 30], true);
     const top: [number, number, number] = [0, 0, 15];
     const up: [number, number, number] = [0, 0, 1];
@@ -29,12 +29,22 @@ describe("buildSeamLabel", () => {
 
     const cube1 = mk();
     const embossed = applySeamLabel(M, cube1, "A", { mode: "emboss", size: 8, depth: 1 }, top, up);
+    expect(embossed.status()).toBe("NoError");
     expect(embossed.volume()).toBeGreaterThan(base);
+    // The raised label must FUSE with the body, not float as a second solid.
+    const comps = embossed.decompose();
+    expect(comps.length).toBe(1);
+    comps.forEach((c: any) => c.delete());
     cube1.delete(); embossed.delete();
 
     const cube2 = mk();
     const debossed = applySeamLabel(M, cube2, "A", { mode: "deboss", size: 8, depth: 1 }, top, up);
+    expect(debossed.status()).toBe("NoError");
     expect(debossed.volume()).toBeLessThan(base);
     cube2.delete(); debossed.delete();
+  });
+
+  it("throws a clear error for text with no printable glyphs", () => {
+    expect(() => buildSeamLabel(M, "   ", { size: 6, depth: 1 })).toThrow(/no printable glyphs/);
   });
 });

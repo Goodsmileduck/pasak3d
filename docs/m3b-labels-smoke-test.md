@@ -20,3 +20,7 @@ Run before declaring M3b seam-label work complete:
 ## Known carry-overs / follow-ups
 
 - Label placement UI is prompt-based in M3b; richer placement controls are deferred.
+- **Flat-top assumption:** labels are a flat slab placed at the part's bbox top (max-Z, +Z normal),
+  sunk `LABEL_SINK_MM` into the body so emboss fuses / deboss cuts through on approximately flat tops.
+  On strongly curved or sloped top faces the emboss can partially detach and the deboss under-engrave.
+  Surface-conforming labels (raycast the true surface point + normal per glyph) are a future enhancement.

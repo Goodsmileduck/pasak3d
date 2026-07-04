@@ -1,6 +1,15 @@
 import { FontLoader, type Font } from "three/examples/jsm/loaders/FontLoader.js";
 import fontJson from "./helvetiker_regular.typeface.json";
-import { placeSolid } from "./orient";
+import { placeSolid, shiftAlong } from "./orient";
+
+export const LABEL_SIZE_MM = 8;      // glyph height
+export const LABEL_DEPTH_MM = 1;     // raised / engraved depth at the surface
+const LABEL_CURVE_SEGMENTS = 6;      // glyph curve tessellation (low = few verts)
+// Sink the label into the body so emboss fuses (and deboss cuts through) even when
+// the placement face isn't perfectly flat at bbox-max. NOTE: labels assume an
+// approximately flat top face — surface-conforming labels (raycast the true surface
+// point + normal) are a future enhancement, not in Phase 1.
+const LABEL_SINK_MM = 0.6;
 
 let cachedFont: Font | null = null;
 
@@ -9,23 +18,26 @@ function getFont(): Font {
   return cachedFont;
 }
 
-/** A raised solid of `text`, extruded from z=0..depth, centered on the XY origin. */
+/** A solid of `text`, extruded from z=0..depth, centered on the XY origin. */
 export function buildSeamLabel(
   M: any,
   text: string,
   opts?: { size?: number; depth?: number },
 ): any {
-  const size = opts?.size ?? 6;
-  const depth = opts?.depth ?? 1;
+  const size = opts?.size ?? LABEL_SIZE_MM;
+  const depth = opts?.depth ?? LABEL_DEPTH_MM;
   const shapes = getFont().generateShapes(text, size);
 
   const contours: Array<Array<[number, number]>> = [];
   for (const shape of shapes) {
-    const { shape: outer, holes } = shape.extractPoints(6);
+    const { shape: outer, holes } = shape.extractPoints(LABEL_CURVE_SEGMENTS);
     contours.push(outer.map((p) => [p.x, p.y] as [number, number]));
     for (const h of holes) {
       contours.push(h.map((p) => [p.x, p.y] as [number, number]));
     }
+  }
+  if (contours.length === 0) {
+    throw new Error(`Label text "${text}" has no printable glyphs.`);
   }
 
   const cs = M.CrossSection.ofPolygons(contours, "EvenOdd");
@@ -39,14 +51,6 @@ export function buildSeamLabel(
   return out;
 }
 
-function shiftAlong(
-  p: [number, number, number],
-  a: [number, number, number],
-  d: number,
-): [number, number, number] {
-  return [p[0] + a[0] * d, p[1] + a[1] * d, p[2] + a[2] * d];
-}
-
 export function applySeamLabel(
   M: any,
   part: any,
@@ -55,10 +59,13 @@ export function applySeamLabel(
   position: [number, number, number],
   axis: [number, number, number],
 ): any {
-  const depth = opts.depth ?? 1;
-  const label = buildSeamLabel(M, text, { size: opts.size, depth });
-  const pos = opts.mode === "deboss" ? shiftAlong(position, axis, -depth) : position;
-  const placed = placeSolid(label, pos, axis);
+  const depth = opts.depth ?? LABEL_DEPTH_MM;
+  // Build the label taller by the sink margin so it always overlaps the body:
+  // emboss buries the base by `sink` (raised height stays `depth`); deboss lets the
+  // cutter poke `sink` past the surface so the recess reaches it on uneven tops.
+  const label = buildSeamLabel(M, text, { size: opts.size, depth: depth + LABEL_SINK_MM });
+  const offset = opts.mode === "emboss" ? -LABEL_SINK_MM : -depth;
+  const placed = placeSolid(label, shiftAlong(position, axis, offset), axis);
   label.delete();
   const out = opts.mode === "emboss" ? M.Manifold.union(part, placed) : part.subtract(placed);
   placed.delete();

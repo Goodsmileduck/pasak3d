@@ -1,5 +1,14 @@
 import * as THREE from "three";
 
+/** Offset a point by distance `d` along a (unit) axis. */
+export function shiftAlong(
+  p: [number, number, number],
+  axis: [number, number, number],
+  d: number,
+): [number, number, number] {
+  return [p[0] + axis[0] * d, p[1] + axis[1] * d, p[2] + axis[2] * d];
+}
+
 export function placeSolid(
   solid: any,
   position: [number, number, number],
