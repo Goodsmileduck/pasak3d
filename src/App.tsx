@@ -50,6 +50,7 @@ async function loadFileFromPath(path: string, onFile: (f: File) => Promise<void>
 /** Web-only: warn the user when imported meshes are big enough that cuts may struggle. */
 const LARGE_MESH_BYTES = 100 * 1024 * 1024;
 const LARGE_MESH_TRIS = 1_000_000;
+type SuggestedCutsState = { partId: PartId; cuts: CutPlaneSpec[]; source: "fit" | "autosplit" };
 
 export default function App() {
   const session = useCutSession();
@@ -59,7 +60,7 @@ export default function App() {
   const [showCutPanel, setShowCutPanel] = useState(false);
   const [previewPlane, setPreviewPlane] = useState<CutPlaneSpec | null>(null);
   const [previewDowels, setPreviewDowels] = useState<Dowel[]>([]);
-  const [suggestedCuts, setSuggestedCuts] = useState<{ partId: PartId; cuts: CutPlaneSpec[] } | null>(null);
+  const [suggestedCuts, setSuggestedCuts] = useState<SuggestedCutsState | null>(null);
   const [autoSplitMaxParts] = useState(8);
   const [autoSplitDetail] = useState(0.45);
   const suggestedBbox = useMemo(() => {
@@ -340,7 +341,7 @@ export default function App() {
       }
     }
     if (!target) return;
-    setSuggestedCuts({ partId: target.id, cuts: suggestCuts(target.bbox, printer) });
+    setSuggestedCuts({ partId: target.id, cuts: suggestCuts(target.bbox, printer), source: "fit" });
   }, [session.session.printer, session.partsArray]);
 
   const onAutoSplit = useCallback(async () => {
@@ -349,7 +350,7 @@ export default function App() {
     try {
       setError(null);
       const planes = await runSegment(target.mesh, { maxParts: autoSplitMaxParts, detail: autoSplitDetail });
-      if (planes.length > 0) setSuggestedCuts({ partId: target.id, cuts: planes });
+      if (planes.length > 0) setSuggestedCuts({ partId: target.id, cuts: planes, source: "autosplit" });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -609,7 +610,12 @@ export default function App() {
               <button
                 className="btn-primary flex-1 py-2"
                 onClick={async () => {
-                  await session.performCutsSequential(suggestedCuts.partId, suggestedCuts.cuts, { count: 4, diameter: 5, length: 20, tolerance: "pla-tight" });
+                  const opts = { count: 4, diameter: 5, length: 20, tolerance: "pla-tight" as const };
+                  if (suggestedCuts.source === "autosplit") {
+                    await session.performAutoSplitCuts(suggestedCuts.partId, suggestedCuts.cuts, opts);
+                  } else {
+                    await session.performCutsSequential(suggestedCuts.partId, suggestedCuts.cuts, opts);
+                  }
                   setSuggestedCuts(null);
                 }}
               >Apply</button>
