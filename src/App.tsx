@@ -18,8 +18,9 @@ import { useTheme } from "./hooks/useTheme";
 import { loadModel } from "./lib/loaders";
 import { useCutSession } from "./hooks/useCutSession";
 import { autoPlaceCutDowels } from "./lib/cut/auto-place-cut-dowels";
-import { runTestFit } from "./lib/cut/cut-client";
+import { runConnectorTestFit } from "./lib/cut/cut-client";
 import { TESTFIT_DEFAULTS } from "./lib/cut/test-fit";
+import { DEFAULT_CONNECTOR_ID, getConnector } from "./lib/cut/connectors/registry";
 import { buildZipExport } from "./lib/exporters/zip-export";
 import { exportToMulti3MF } from "./lib/exporters/3mf";
 import { saveBytes } from "./lib/exporters/save";
@@ -36,6 +37,7 @@ import type {
   JointShape,
   JointPolarity,
 } from "./types";
+import { JOINT_SHAPES } from "./types";
 
 /** Read a file from disk via Tauri and feed it to the standard load pipeline. */
 async function loadFileFromPath(path: string, onFile: (f: File) => Promise<void>): Promise<void> {
@@ -61,6 +63,7 @@ export default function App() {
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [cutAxis, setCutAxis] = useState<"x" | "y" | "z">("x");
+  const [connectorId, setConnectorId] = useState(DEFAULT_CONNECTOR_ID);
   const [jointShape, setJointShape] = useState<JointShape>("cylinder");
   const [jointPolarity, setJointPolarity] = useState<JointPolarity>("separate-peg");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -166,17 +169,22 @@ export default function App() {
     setPreviewPlane(plane);
     const length = safeDowelLength(plane, dowelsHint[0]?.length ?? 20);
     const shape = dowelsHint[0]?.shape ?? jointShape;
+    const selectedConnectorId = dowelsHint[0]?.connectorId ?? connectorId;
     const polarity = dowelsHint[0]?.polarity ?? jointPolarity;
     const placed = autoPlaceCutDowels(activePart.mesh, plane, {
       count: dowelsHint.length,
       dowelDiameter: dowelsHint[0]?.diameter ?? 5,
       length,
       minSpacing: 2,
-    }).map((d) => ({ ...d, shape, polarity }));
-    // Replace auto dowels but preserve user-added manual ones.
+    }).map((d) => ({ ...d, shape, connectorId: selectedConnectorId, polarity }));
+    // Replace auto dowels but preserve user-added manual ones — re-stamping their
+    // connector to the current selection so the cut never sees a mixed-connector set
+    // (applyConnectors rejects those).
     setPreviewDowels((prev) => [
       ...placed,
-      ...prev.filter((d) => d.source === "manual"),
+      ...prev
+        .filter((d) => d.source === "manual")
+        .map((d) => ({ ...d, shape, connectorId: selectedConnectorId, polarity })),
     ]);
   };
 
@@ -195,9 +203,17 @@ export default function App() {
         length,
         source: "manual",
         shape: sample?.shape ?? jointShape,
+        connectorId: sample?.connectorId ?? connectorId,
         polarity: sample?.polarity ?? jointPolarity,
       },
     ]);
+  };
+
+  const onConnectorChange = (id: string) => {
+    setConnectorId(id);
+    if (JOINT_SHAPES.includes(id as JointShape)) {
+      setJointShape(id as JointShape);
+    }
   };
 
   const onDeleteDowel = (id: string) => {
@@ -226,16 +242,22 @@ export default function App() {
     setShowExportDialog(true);
   };
 
+  // Connector-aware test-fit sweep, seeded from the selected connector's default
+  // clearance. Both the toolbar and the cut-panel buttons use this so they never
+  // diverge (the old shape-based toolbar sweep ignored the selected connector).
   const onTestFit = useCallback(async () => {
     try {
       setError(null);
-      const items = await runTestFit({ ...TESTFIT_DEFAULTS, shape: jointShape });
+      const items = await runConnectorTestFit(connectorId, {
+        ...TESTFIT_DEFAULTS,
+        baseClearance: getConnector(connectorId)?.defaults.clearance ?? TESTFIT_DEFAULTS.baseClearance,
+      });
       const bytes = buildZipExport(items, []);
       await saveBytes("pasak-testfit.zip", "application/zip", bytes);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [jointShape]);
+  }, [connectorId]);
 
   const onLabelPart = useCallback((partId: PartId) => {
     const part = session.session.parts.get(partId);
@@ -423,6 +445,9 @@ export default function App() {
               setPreviewDowels([]);
             }}
             busy={session.busy}
+            connectorId={connectorId}
+            onConnectorChange={onConnectorChange}
+            onConnectorTestFit={onTestFit}
             jointShape={jointShape}
             onJointShapeChange={setJointShape}
             jointPolarity={jointPolarity}

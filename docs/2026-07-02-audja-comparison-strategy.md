@@ -75,6 +75,14 @@ segmentation — the one feature genuinely impractical client-side.
 **Verify MeshLib's license for commercial use** (3D Lab is a commercial product) — do not assume.
 Safely-permissive fallbacks for the heavy work: **OpenVDB** (MPL-2.0), **`manifold-3d`** (Apache-2.0).
 
+**Update (2026-07-03, from inspecting Audja's install — see teardown §8):** Audja ships **MeshLib *and*
+OpenVDB together** (`MeshLibC2.dll` + `openvdb.dll`/`blosc.dll`/`tbb12.dll`); MeshLib uses OpenVDB
+internally. So "MeshLib vs OpenVDB" is not either/or — **adopting MeshLib's C API gets the OpenVDB voxel
+ops (hollow/offset) too.** Pure-OpenVDB+Rust is the fallback only if MeshLib's commercial terms fail.
+Also discovered: Audja's connector is a **pre-designed articulating key mesh** (`assets/articulation/
+Key-Joint.stl`), not a procedural primitive — so the top near-term web-tier gap is a **designed-connector
+joint type**, ahead of the native tier.
+
 ## Suggested sequencing (when/if we build)
 
 1. **Socket / keyed-joint + cut-quality improvements** on the web tier — most value, lowest risk,

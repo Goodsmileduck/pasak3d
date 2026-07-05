@@ -63,6 +63,7 @@ export type Joint = {
   length: number;                      // mm
   source: "auto" | "manual";
   shape?: JointShape;                  // default "cylinder"
+  connectorId?: string;                // catalog connector; absent => M1 shape
   polarity?: JointPolarity;            // default "separate-peg"
   taper?: number;                      // 0..1 draft (0 = straight)
   clearance?: number;                  // per-joint radial clearance override (mm)

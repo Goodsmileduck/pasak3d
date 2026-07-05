@@ -16,10 +16,12 @@ const baseProps = {
 };
 
 describe("CutPanel", () => {
-  it("calls onJointShapeChange when a shape is selected", async () => {
+  it("selecting a connector drives the underlying joint shape", async () => {
+    // The connector picker is the sole shape driver now (the redundant Shape
+    // select was removed); picking a keyed connector must set jointShape to match.
     const onShape = vi.fn();
-    render(<CutPanel {...baseProps} jointShape="cylinder" onJointShapeChange={onShape} />);
-    await userEvent.selectOptions(screen.getByLabelText(/joint shape/i), "dovetail");
+    render(<CutPanel {...baseProps} connectorId="cylinder" onJointShapeChange={onShape} />);
+    await userEvent.selectOptions(screen.getByLabelText(/connector/i), "dovetail");
     expect(onShape).toHaveBeenCalledWith("dovetail");
   });
 
@@ -28,5 +30,35 @@ describe("CutPanel", () => {
     render(<CutPanel {...baseProps} jointPolarity="separate-peg" onJointPolarityChange={onPolarity} />);
     await userEvent.selectOptions(screen.getByLabelText(/joint polarity/i), "magnet");
     expect(onPolarity).toHaveBeenCalledWith("magnet");
+  });
+
+  it("calls onConnectorChange when a connector is selected", async () => {
+    const onConnector = vi.fn();
+    render(<CutPanel {...baseProps} connectorId="cylinder" onConnectorChange={onConnector} />);
+    await userEvent.selectOptions(screen.getByLabelText(/connector/i), "dovetail");
+    expect(onConnector).toHaveBeenCalledWith("dovetail");
+  });
+
+  it("calls onConnectorTestFit when the test-fit button is clicked", async () => {
+    const onTestFit = vi.fn();
+    render(<CutPanel {...baseProps} connectorId="snap-pin" onConnectorTestFit={onTestFit} />);
+    await userEvent.click(screen.getByRole("button", { name: /test.?fit/i }));
+    expect(onTestFit).toHaveBeenCalled();
+  });
+
+  it("hides the polarity control for non-M1 connectors (it has no effect there)", async () => {
+    render(<CutPanel {...baseProps} connectorId="cylinder" />);
+    expect(screen.queryByLabelText(/joint polarity/i)).not.toBeNull(); // M1 shape → shown
+    await userEvent.click(screen.getByRole("button", { name: /^snap$/i }));
+    expect(screen.queryByLabelText(/joint polarity/i)).toBeNull();     // snap connector → hidden
+  });
+
+  it("switching category resyncs the connector so App state matches the display", async () => {
+    // A keyed connector is selected; switching to Snap must adopt the first snap
+    // connector (else Cut/Test-fit would act on the stale keyed id shown by App).
+    const onConnector = vi.fn();
+    render(<CutPanel {...baseProps} connectorId="cylinder" onConnectorChange={onConnector} />);
+    await userEvent.click(screen.getByRole("button", { name: /^snap$/i }));
+    expect(onConnector).toHaveBeenCalledWith("snap-pin");
   });
 });

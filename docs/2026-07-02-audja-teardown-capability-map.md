@@ -253,3 +253,49 @@ Ranked by value ÷ risk, respecting the tiered strategy:
 - Security audit of Audja (separate): no backdoor/spyware indicators; ordinary risks only. Not relevant
   to pasak's build but informs "is this a safe app to benchmark against" — yes.
 - Extracted Audja files live outside this repo (session scratchpad); this doc is the durable summary.
+
+---
+
+## 8. Install-folder findings (2026-07-03) — inspecting the actual shipped assets
+
+§1–§7 were **static binary/symbol analysis**. This section adds what the **extracted install folder**
+(`Audja.zip` → `Audja/…`, kept in `../../brain`) actually contains — which materially changes two
+conclusions. Confidence **HIGH** (real shipped files, not inference).
+
+### 8.1 The connector is a pre-designed MESH, not a procedural primitive — [HIGH, key finding]
+`Audja/assets/articulation/Key-Joint.stl` — a **60,004-triangle, ~18 × 25 × 31 mm** designed
+articulating key, authored in MeshInspector.com (MeshLib's tool). The folder is literally **`articulation`**.
+Orthographic + slab analysis: a rounded paddle **stem** narrowing into a **flared dovetail base with a
+rectangular socket**, and the cross-section **varies through depth** (forked prongs → curved hook/spiral) —
+so it is a genuinely 3D interlocking/snap key, **not an extrusion or a math primitive**. Audja instances /
+scales this one mesh along each seam.
+
+**Implication for pasak:** the visible "splits differently" gap is mostly the CONNECTOR, not the cut
+algorithm. Pasak's M1 joint framework (procedural cylinder/cube/cross/dovetail/puzzle) is the right base,
+but matching Audja needs a **designed connector dropped into that framework** — a new joint "shape" that is
+an imported/instanced key mesh (boolean it + clearance into both halves, emit the printed key), rather than
+only primitives. This is **web-tier feasible** on manifold-3d. Highest-value near-term add.
+
+### 8.2 MeshLib AND OpenVDB ship together — the Phase-3 license gate is simpler than framed — [HIGH]
+The install bundles the **full MeshLib stack** (`MeshLibC2.dll` — the C API, 7.9 MB — plus `MRMesh`,
+`MRVoxels`, `MRCuda`, `MRViewer`, `MRIOExtras`, `MRSymbolMesh`) **and** the **OpenVDB voxel stack**
+(`openvdb.dll`, `blosc.dll`, `tbb12.dll`). MeshLib uses OpenVDB internally for voxel ops (hollow/offset).
+So the companion doc's "MeshLib **vs** OpenVDB" gate is really: **MeshLib (C API via FFI) gives you the
+OpenVDB voxel ops too** — it is not either/or. Pure-OpenVDB + Rust remains the fallback only if MeshLib's
+commercial license is unacceptable. **License verification of MeshLib is still the gating item.**
+
+### 8.3 Labels via MeshLib text→mesh — [HIGH]
+`MRSymbolMesh.dll` + bundled `editundo.ttf` = how Audja embosses assembly seam labels (§1.2). Pasak's M3b
+(three.js glyphs → manifold `CrossSection` → extrude) is a sound web-tier equivalent — no native dep needed.
+
+### 8.4 Settings confirm the segmentation params — [HIGH]
+`audja_settings.ini` `[AISegmentation]` matches §2 exactly (`segmentMethod=2, geoMaxParts=64,
+geoGranularity=0.45, geoConcavity=0.28, …`) with **`segmentParts=0`** (auto-split OFF by default). Also:
+bed `220×220×250`, nozzle `0.4`, `maxUndo=15`, autosave 20 min. Backend `api.audja.com` + Supabase; plugins
+disabled (`plugin-policy.json {enabled:false}`).
+
+### 8.5 Net gap list (what pasak still lacks to split "the same way")
+1. **A real articulated connector** (designed key mesh instanced on the seam) — web-tier, near-term. NEW.
+2. **Auto-split segmentation** (where to cut) — the §2 region-growing algorithm — Phase 4.
+3. Native heavy geometry (hollow/thicken/offset/decimate/strong-repair) — Phase 3, via MeshLib (incl. its
+   OpenVDB voxel ops) pending license check.
