@@ -1,11 +1,5 @@
 import type { Connector, ConnectorParams } from "../types";
-
-function assertNoError(solid: any, label: string): void {
-  const status = solid.status();
-  if (status !== "NoError") {
-    throw new Error(`${label}: ${status}`);
-  }
-}
+import { assertNoError } from "../../manifold-assert";
 
 function pinSolid(M: any, size: number, length: number, grow: number): any {
   const rStem = size / 2 + grow;

@@ -1,12 +1,6 @@
 import { buildJointSolid } from "../../joints/shapes";
+import { assertNoError } from "../../manifold-assert";
 import type { Connector, ConnectorParams } from "../types";
-
-function assertNoError(solid: any, label: string): void {
-  const status = solid.status();
-  if (status !== "NoError") {
-    throw new Error(`${label}: ${status}`);
-  }
-}
 
 function dovetailWithDetent(M: any, size: number, length: number, grow: number): any {
   const body = buildJointSolid(M, { shape: "dovetail", diameter: size, length, grow });

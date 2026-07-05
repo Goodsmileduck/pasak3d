@@ -83,6 +83,8 @@ describe("applyConnectors", () => {
   });
 
   it("integral connector fuses male on partA, cuts a catch in partB, emits no piece", () => {
+    // Parts on opposite sides of the z=0 seam so the clip spans it realistically.
+    const half = (zc: number) => M.Manifold.cube([30, 30, 30], true).translate([0, 0, zc]);
     const j = {
       id: "j",
       position: [0, 0, 0] as [number, number, number],
@@ -92,12 +94,14 @@ describe("applyConnectors", () => {
       source: "auto" as const,
       connectorId: "cantilever-clip",
     };
-    const a = box(), b = box();
-    const aVol = a.volume(), bVol = b.volume();
+    const a = half(-15), b = half(15);           // A below the seam, B above
+    const aBefore = a.boundingBox();
+    const bVol = b.volume();
     const r = applyConnectors(M, a, b, [j], "pla-tight");
-    expect(r.partA.volume()).toBeGreaterThan(aVol);
-    expect(r.partB.volume()).toBeLessThan(bVol);
-    expect(r.jointPieces.length).toBe(0);
+    // Male fused onto A: A now reaches ABOVE the seam (protrudes past its own top).
+    expect(r.partA.boundingBox().max[2]).toBeGreaterThan(aBefore.max[2] + 1);
+    expect(r.partB.volume()).toBeLessThan(bVol); // catch cut into the receiver
+    expect(r.jointPieces.length).toBe(0);        // integral = no separate piece
     r.partA.delete(); r.partB.delete(); a.delete(); b.delete();
   });
 });

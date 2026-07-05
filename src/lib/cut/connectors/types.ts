@@ -1,5 +1,5 @@
 import type { Joint, TolerancePreset } from "../../../types";
-import { resolveClearance } from "../../../types";
+import { TOLERANCE_VALUES } from "../../../types";
 
 export type ConnectorCategory = "keyed" | "snap";
 export type AssemblyModel = "separate-piece" | "integral";
@@ -27,11 +27,20 @@ export type Connector = {
   describe: string;
 };
 
-export function resolveConnectorParams(joint: Joint, preset: TolerancePreset): ConnectorParams {
+/**
+ * Build params for a connector on a placed joint. Clearance precedence:
+ * per-joint override → the connector's own default → the tolerance preset. Snap
+ * connectors depend on their tuned default (a preset value is far too tight to flex).
+ */
+export function resolveConnectorParams(
+  joint: Joint,
+  connector: Connector,
+  preset: TolerancePreset,
+): ConnectorParams {
   return {
     size: joint.diameter,
     length: joint.length,
     taper: joint.taper,
-    clearance: resolveClearance(joint, preset),
+    clearance: joint.clearance ?? connector.defaults.clearance ?? TOLERANCE_VALUES[preset],
   };
 }
