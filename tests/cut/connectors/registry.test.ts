@@ -14,6 +14,11 @@ describe("connector registry", () => {
 
   it("lists snap connectors after P2-M3", () => {
     const snap = listByCategory("snap").map((c) => c.id).sort();
-    expect(snap).toEqual(["cantilever-clip", "snap-dovetail", "snap-pin"]);
+    expect(snap).toEqual(["cantilever-clip", "snap-dovetail", "snap-key", "snap-pin"]);
+  });
+
+  it("registers snap-key in the snap category", () => {
+    expect(getConnector("snap-key")?.id).toBe("snap-key");
+    expect(listByCategory("snap").map((c) => c.id)).toContain("snap-key");
   });
 });

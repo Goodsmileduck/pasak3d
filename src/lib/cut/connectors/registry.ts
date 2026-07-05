@@ -3,6 +3,7 @@ import { tSlotConnector } from "./keyed/t-slot";
 import { m1KeyedConnectors } from "./m1-adapter";
 import { cantileverClipConnector } from "./snap/cantilever-clip";
 import { snapDovetailConnector } from "./snap/snap-dovetail";
+import { snapKeyConnector } from "./snap/snap-key";
 import { snapPinConnector } from "./snap/snap-pin";
 import type { JointShape } from "../../../types";
 import { JOINT_SHAPES } from "../../../types";
@@ -19,6 +20,7 @@ const ALL: Connector[] = [
   tSlotConnector,
   snapPinConnector,
   snapDovetailConnector,
+  snapKeyConnector,
   cantileverClipConnector,
 ];
 
