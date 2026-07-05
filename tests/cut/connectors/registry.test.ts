@@ -10,6 +10,10 @@ describe("connector registry", () => {
 
   it("lists keyed connectors (>= the 5 M1 shapes)", () => {
     expect(listByCategory("keyed").length).toBeGreaterThanOrEqual(5);
-    expect(listByCategory("snap")).toEqual([]);
+  });
+
+  it("lists snap connectors after P2-M3", () => {
+    const snap = listByCategory("snap").map((c) => c.id).sort();
+    expect(snap).toEqual(["cantilever-clip", "snap-dovetail", "snap-pin"]);
   });
 });
