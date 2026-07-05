@@ -21,12 +21,10 @@ function FitIndicator({
   parts,
   printer,
   onSuggestCuts,
-  onAutoSplit,
 }: {
   parts: Array<{ visible: boolean; isDowel: boolean; group: THREE.Group }>;
   printer: PrinterPreset | null | undefined;
   onSuggestCuts?: () => void;
-  onAutoSplit?: () => void;
 }) {
   if (!printer) {
     return (
@@ -48,11 +46,6 @@ function FitIndicator({
     return (
       <span className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-[var(--success-tint)] text-[var(--success)]">
         <span>All parts fit {printer.name}</span>
-        {onAutoSplit && (
-          <button className="underline hover:no-underline" onClick={onAutoSplit}>
-            Auto-Split
-          </button>
-        )}
       </span>
     );
   }
@@ -65,17 +58,13 @@ function FitIndicator({
           Suggest cuts
         </button>
       )}
-      {onAutoSplit && (
-        <button className="underline hover:no-underline" onClick={onAutoSplit}>
-          Auto-Split
-        </button>
-      )}
     </span>
   );
 }
 
 export function StatusBar({ info, error, isLoading, parts, printer, onSuggestCuts, onAutoSplit }: StatusBarProps) {
   const separator = "hidden md:inline text-[var(--ink-faint)]";
+  const hasAutoSplitTarget = parts?.some((p) => p.visible && !p.isDowel) ?? false;
 
   return (
     <div className="flex items-center gap-2 md:gap-4 px-2 md:px-3 py-1 border-t border-[var(--border)] text-xs shrink-0 select-none bg-[var(--surface)] text-[var(--ink-muted)]">
@@ -99,8 +88,12 @@ export function StatusBar({ info, error, isLoading, parts, printer, onSuggestCut
               parts={parts}
               printer={printer}
               onSuggestCuts={onSuggestCuts}
-              onAutoSplit={onAutoSplit}
             />
+          )}
+          {onAutoSplit && hasAutoSplitTarget && (
+            <button className="underline hover:no-underline" onClick={onAutoSplit}>
+              Auto-Split
+            </button>
           )}
         </>
       )}

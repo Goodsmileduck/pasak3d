@@ -33,4 +33,24 @@ describe("StatusBar", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: /auto-split/i }));
     expect(onAutoSplit).toHaveBeenCalledTimes(1);
   });
+
+  it("calls onAutoSplit when no printer is set", async () => {
+    const onAutoSplit = vi.fn();
+    const group = new THREE.Group();
+    group.add(new THREE.Mesh(new THREE.BoxGeometry(10, 10, 10)));
+
+    render(
+      <StatusBar
+        info={info}
+        error={null}
+        isLoading={false}
+        parts={[{ visible: true, isDowel: false, group }]}
+        printer={null}
+        onAutoSplit={onAutoSplit}
+      />,
+    );
+
+    await userEvent.setup().click(screen.getByRole("button", { name: /auto-split/i }));
+    expect(onAutoSplit).toHaveBeenCalledTimes(1);
+  });
 });
