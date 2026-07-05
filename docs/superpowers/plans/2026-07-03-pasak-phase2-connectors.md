@@ -1216,19 +1216,236 @@ git commit -m "feat(connectors): register snap-fit set; docs(p2-m3): snap-fit sm
 
 ---
 
-# P2-M4 — Connector test-fit + tolerance presets (outline)
+# P2-M4 — Connector test-fit + tolerance presets
 
-- **Extend the M2 generator** (`src/lib/cut/test-fit.ts`): `generateConnectorTestFit(M, connectorId, opts)`
-  emits coupon pairs (a block carrying the connector's male/integral feature + a block with its
-  `femaleCavity`) across a clearance sweep, reusing the block/naming/zip path. Per-connector
-  `defaults.clearance` seed the sweep.
-- **Worker op + client**: extend the `testfit` op (or add `connector-testfit`) + a `runConnectorTestFit`
-  bridge through `submit`; UI action "Test-fit this connector".
-- **Per-connector clearance defaults** surfaced in the CutPanel picker.
-- Tests: coupon count, clearance sweep monotonic, socket grows with clearance, snap coupon piece fits the
-  swept sockets at/after its default clearance.
-- Tasks: (1) generateConnectorTestFit + test; (2) worker/client bridge + test; (3) UI action + defaults;
-  (4) verify + `docs/p2-m4-connector-testfit-smoke-test.md`; STOP.
+Deliverable: emit connector-specific coupon pairs across a clearance sweep so a user prints a strip and
+dials in the fit — essential for the P2-M3 snap connectors. Reuses the M2 coupon block/naming/zip path and
+the M3a `submit`/`serializeAll` transport.
+
+## File structure (P2-M4)
+
+- Modify `src/lib/cut/test-fit.ts` — `generateConnectorTestFit` + a `buildCouponFromSolid` helper + a
+  `CouponPair` base type.
+- Modify `src/workers/cut-worker.ts` + `src/lib/cut/cut-client.ts` — extend the `testfit` op with an
+  optional `connectorId`; add a `runConnectorTestFit` client bridge.
+- Modify `src/components/CutPanel.tsx` + `src/App.tsx` — a "Test-fit connector" action seeded from the
+  connector's `defaults.clearance`.
+- Tests: extend `tests/cut/test-fit.test.ts`, `tests/cut/cut-client.test.ts`, `tests/components/CutPanel.test.tsx`.
+
+---
+
+### Task 15: `generateConnectorTestFit`
+
+**Files:**
+- Modify: `src/lib/cut/test-fit.ts`
+- Test: `tests/cut/test-fit.test.ts` (add)
+
+**Interfaces:**
+- Produces:
+  ```ts
+  export type CouponPair = { clearance: number; male: any; maleName: string; female: any; femaleName: string };
+  export type TestFitPair = CouponPair & { shape: JointShape };   // existing, now extends CouponPair
+  export function generateConnectorTestFit(M: any, connector: Connector, opts: TestFitOpts): CouponPair[];
+  ```
+  Male coupon = a block fused with the connector's **piece** (separate-piece) or **integralMale** (integral),
+  nominal. Female coupon = a block with the connector's **femaleCavity** at clearance_i subtracted. Sweep =
+  `baseClearance + i*step`; names `testfit_<NN>_<connectorId>_c<clr>_(A|B).stl`.
+- Consumes: `Connector` (`connectors/types.ts`), the existing `buildCoupon`/`TestFitOpts`.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/cut/test-fit.test.ts — add
+import { generateConnectorTestFit } from "../../src/lib/cut/test-fit";
+import { getConnector } from "../../src/lib/cut/connectors/registry";
+
+const copts = { count: 3, step: 0.05, baseClearance: 0.15, cubeSize: 14, keyDepth: 6, keyWidth: 8, shape: "cylinder" as const };
+
+it("generateConnectorTestFit emits a coupon sweep for a snap connector", () => {
+  const pins = generateConnectorTestFit(M, getConnector("snap-pin")!, copts);
+  expect(pins.length).toBe(3);
+  expect(pins.map((p) => p.clearance)).toEqual([0.15, 0.2, 0.25].map((v) => expect.closeTo(v, 5)));
+  // Bigger clearance ⇒ bigger socket ⇒ less material in the female coupon.
+  expect(pins[2].female.volume()).toBeLessThan(pins[0].female.volume());
+  expect(pins[0].maleName).toContain("snap-pin");
+  pins.forEach((p) => { p.male.delete(); p.female.delete(); });
+});
+
+it("works for an integral connector (male coupon fuses the integral clip)", () => {
+  const clip = generateConnectorTestFit(M, getConnector("cantilever-clip")!, copts);
+  expect(clip.length).toBe(3);
+  clip.forEach((p) => { expect(p.male.status()).toBe("NoError"); p.male.delete(); p.female.delete(); });
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL** (`generateConnectorTestFit` not defined)
+
+Run: `npx vitest run tests/cut/test-fit.test.ts`
+
+- [ ] **Step 3: Implement**
+
+In `test-fit.ts`: add the `CouponPair` type, make `TestFitPair = CouponPair & { shape: JointShape }`, and add:
+
+```ts
+import type { Connector } from "./connectors/types";
+
+/** Seat an already-built local +Z solid on a coupon block's top face and combine. Deletes the local. */
+function buildCouponFromSolid(M: any, cubeSize: number, local: any, combine: (b: any, s: any) => any): any {
+  const block = M.Manifold.cube([cubeSize, cubeSize, cubeSize], true);
+  const solid = local.translate([0, 0, cubeSize / 2]);
+  local.delete();
+  const out = combine(block, solid);
+  block.delete(); solid.delete();
+  return out;
+}
+
+export function generateConnectorTestFit(M: any, connector: Connector, opts: TestFitOpts): CouponPair[] {
+  const pairs: CouponPair[] = [];
+  for (let i = 0; i < opts.count; i++) {
+    const clearance = opts.baseClearance + i * opts.step;
+    const params = (grow: number) => ({ size: opts.keyWidth, length: opts.keyDepth * 2, clearance: grow });
+    const maleLocal = connector.assembly === "integral"
+      ? connector.build.integralMale!(M, params(0))
+      : connector.build.piece(M, params(0));
+    const male = buildCouponFromSolid(M, opts.cubeSize, maleLocal, (b, s) => b.add(s));
+    const femaleLocal = connector.build.femaleCavity(M, params(clearance));
+    const female = buildCouponFromSolid(M, opts.cubeSize, femaleLocal, (b, s) => b.subtract(s));
+    const tag = `${String(i).padStart(2, "0")}_${connector.id}_c${clearance.toFixed(2)}`;
+    pairs.push({ clearance, male, maleName: `testfit_${tag}_A.stl`, female, femaleName: `testfit_${tag}_B.stl` });
+  }
+  return pairs;
+}
+```
+
+(Note: `connector.build.piece` returns non-null for keyed/snap separate-piece connectors; integral
+connectors use `integralMale`. Both feature solids are local +Z, so `buildCouponFromSolid` seats them like
+the M2 coupons.)
+
+- [ ] **Step 4: Run — expect PASS**
+
+Run: `npx vitest run tests/cut/test-fit.test.ts`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/cut/test-fit.ts tests/cut/test-fit.test.ts
+git commit -m "feat(testfit): generateConnectorTestFit — coupon sweep from connector builders"
+```
+
+---
+
+### Task 16: Worker + client bridge
+
+**Files:**
+- Modify: `src/workers/cut-worker.ts`, `src/lib/cut/cut-client.ts`
+- Test: `tests/cut/cut-client.test.ts` (add)
+
+**Interfaces:**
+- `TestFitOpts` gains `connectorId?: string` (and `shape` becomes optional, defaulting to `"cylinder"` in
+  `generateTestFitPairs`). The worker's `testfit` handler: if `req.testfit.connectorId`, run
+  `generateConnectorTestFit(M, getConnector(connectorId)!, req.testfit)`; else `generateTestFitPairs`. Same
+  serialize/coupons response.
+- Client: `runConnectorTestFit(connectorId: string, opts: TestFitOpts): Promise<ExportItem[]>` posts the
+  `testfit` op with `connectorId` and maps coupons via the existing path.
+
+- [ ] **Step 1: Add a failing client test**
+
+```ts
+// tests/cut/cut-client.test.ts — add; extend the CutClientWorker stub's testfit branch to honor connectorId
+it("runConnectorTestFit returns hydrated coupons for a connector", async () => {
+  vi.stubGlobal("Worker", CutClientWorker);
+  const items = await runConnectorTestFit("snap-pin", {
+    count: 2, step: 0.05, baseClearance: 0.2, cubeSize: 14, keyDepth: 6, keyWidth: 8,
+  });
+  expect(items.length).toBe(4); // 2 pairs × (A + B)
+  expect(items.some((i) => i.name.includes("snap-pin"))).toBe(true);
+  vi.unstubAllGlobals();
+});
+```
+
+Also update the stub's `if (req.op === "testfit")` branch to: `const pairs = req.testfit.connectorId ?
+generateConnectorTestFit(M, getConnector(req.testfit.connectorId)!, req.testfit) : generateTestFitPairs(M, req.testfit);`
+
+- [ ] **Step 2: Run — expect FAIL** (`runConnectorTestFit` not exported)
+
+Run: `npx vitest run tests/cut/cut-client.test.ts`
+
+- [ ] **Step 3: Implement**
+
+Make `TestFitOpts.shape` optional + add `connectorId?: string`; in `generateTestFitPairs` default
+`opts.shape ?? "cylinder"`. In `cut-worker.ts` branch the `testfit` op on `connectorId` (import
+`generateConnectorTestFit` + `getConnector`). In `cut-client.ts` add
+`runConnectorTestFit(connectorId, opts)` mirroring `runTestFit` but injecting `connectorId` into the
+`testfit` payload; reuse the coupon→`ExportItem` mapping.
+
+- [ ] **Step 4: Run — expect PASS** (new + existing testfit/cut tests)
+
+Run: `npx vitest run tests/cut/`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/workers/cut-worker.ts src/lib/cut/cut-client.ts tests/cut/cut-client.test.ts
+git commit -m "feat(testfit): worker testfit op + runConnectorTestFit — connector coupon sweep"
+```
+
+---
+
+### Task 17: UI action + per-connector clearance default
+
+**Files:**
+- Modify: `src/components/CutPanel.tsx`, `src/App.tsx`
+- Test: `tests/components/CutPanel.test.tsx` (add)
+
+**Interfaces:** CutPanel gains `onConnectorTestFit?: () => void`; a "Test-fit connector" button next to the
+connector picker calls it. `App.onConnectorTestFit` runs `runConnectorTestFit(connectorId, { ...TESTFIT_DEFAULTS,
+baseClearance: getConnector(connectorId)?.defaults.clearance ?? TESTFIT_DEFAULTS.baseClearance })` then
+`saveBytes(buildZipExport(items, []), "pasak-connector-testfit.zip")`. The picker shows the connector's
+default clearance as hint text.
+
+- [ ] **Step 1: Add a failing UI test**
+
+```tsx
+// tests/components/CutPanel.test.tsx — add
+it("calls onConnectorTestFit when the test-fit button is clicked", async () => {
+  const onTestFit = vi.fn();
+  render(<CutPanel {...baseProps} connectorId="snap-pin" onConnectorTestFit={onTestFit} />);
+  await userEvent.click(screen.getByRole("button", { name: /test.?fit/i }));
+  expect(onTestFit).toHaveBeenCalled();
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL**
+
+Run: `npx vitest run tests/components/CutPanel.test.tsx`
+
+- [ ] **Step 3: Implement (Filament tokens)**
+
+Add the `onConnectorTestFit?: () => void` prop + a compact "Test-fit" button by the connector select, and a
+small hint line showing `getConnector(connectorId)?.defaults.clearance` when set. Wire `App.onConnectorTestFit`
+as above (import `runConnectorTestFit`, `getConnector`, `buildZipExport`, `saveBytes`, `TESTFIT_DEFAULTS`).
+
+- [ ] **Step 4: Run — expect PASS**
+
+Run: `npx vitest run tests/components/CutPanel.test.tsx`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/components/CutPanel.tsx src/App.tsx tests/components/CutPanel.test.tsx
+git commit -m "feat(testfit): CutPanel test-fit action + per-connector clearance default"
+```
+
+---
+
+### Task 18: P2-M4 verification + smoke doc
+
+- [ ] **Step 1:** `npm run test && npm run typecheck && npm run build:web && npm run build` → all pass.
+- [ ] **Step 2:** Write `docs/p2-m4-connector-testfit-smoke-test.md` (existing style): pick snap-pin, click
+  Test-fit, print the coupon strip, confirm each labeled pair steps clearance and the pin snaps into the
+  socket that matches the connector's default clearance.
+- [ ] **Step 3:** `git add docs/p2-m4-connector-testfit-smoke-test.md && git commit -m "docs(p2-m4): connector test-fit smoke checklist"`
+- [ ] **STOP — Phase 2 complete; pause for user review.**
 
 ---
 
