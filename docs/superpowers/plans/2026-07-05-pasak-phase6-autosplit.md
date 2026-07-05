@@ -325,8 +325,8 @@ describe("segmentFaces", () => {
   });
 
   it("cuts a region at a strong concave crease, not at a convex fold", () => {
-    expect(distinct(segmentFaces(foldPair(1), new Float32Array([1, 1]), { maxParts: 64, detail: 0.45 }))).toBe(1);
-    expect(distinct(segmentFaces(foldPair(-1), new Float32Array([1, 1]), { maxParts: 64, detail: 0.45 }))).toBe(2);
+    expect(distinct(segmentFaces(foldPair(1).geometry, new Float32Array([1, 1]), { maxParts: 64, detail: 0.45 }))).toBe(1);
+    expect(distinct(segmentFaces(foldPair(-1).geometry, new Float32Array([1, 1]), { maxParts: 64, detail: 0.45 }))).toBe(2);
   });
 });
 ```
