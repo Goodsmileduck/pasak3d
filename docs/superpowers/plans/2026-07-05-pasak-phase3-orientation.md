@@ -457,22 +457,274 @@ git commit -m "feat(overhang): wire heatmap toggle/threshold into scene with res
 
 ---
 
-# P3-M2 — Bed-cut preview (outline)
+# P3-M2 — Bed-cut preview (read-only)
 
-Expand to full TDD detail after P3-M1 review. Locked interfaces:
+Deliverable: while a fit-to-printer suggestion is pending (between "Suggest cuts" and Apply/Cancel), the
+suggested cut planes render as translucent, non-interactive **amber** gizmos in the scene — a visual of
+where the splits land. No cut-engine or suggest-flow changes.
 
-- **Create `src/components/SuggestedCutPlanes.tsx`**: props `{ cuts: CutPlaneSpec[]; bbox: THREE.Box3 }`;
-  renders one translucent, non-interactive plane per cut, reusing `CutPlane`'s position/quaternion/size
-  math (extract that into a shared `planeTransform(plane, bbox)` helper in `CutPlane.tsx` so both use it —
-  DRY). Distinct color from the active cut gizmo (e.g. amber) + `depthWrite={false}`, no `onClick`.
-- **Modify `Viewer.tsx`**: add `suggestedCuts?: CutPlaneSpec[]` + reuse the active part's bbox; render
-  `<SuggestedCutPlanes>` inside `SceneInner` when present.
-- **Modify `App.tsx`**: pass `suggestedCuts?.cuts` (the pending `{ partId, cuts }`) + the part bbox to the
-  Viewer; clears when the suggestion is applied/cancelled (existing flow).
-- **Tests** `tests/components/SuggestedCutPlanes.test.tsx`: renders N plane meshes for N cuts, 0 for empty;
-  `tests/cut/…` none (no geometry change); `planeTransform` unit test if extracted.
-- Tasks: (1) extract `planeTransform` + test; (2) `SuggestedCutPlanes` component + test; (3) Viewer + App
-  wiring; (4) verify + `docs/p3-m2-bedcut-preview-smoke-test.md`; STOP.
+## File structure (P3-M2)
+
+- Create `src/lib/plane-transform.ts` — `planeTransform(plane, bbox)` (the position/quaternion/size math
+  extracted from `CutPlane.tsx`, so the active gizmo and the suggested gizmos share one implementation).
+- Modify `src/components/CutPlane.tsx` — consume `planeTransform` instead of its inline `useMemo` math.
+- Create `src/components/SuggestedCutPlanes.tsx` — one translucent amber plane per suggested cut.
+- Modify `src/components/Viewer.tsx` — new `suggestedCuts` prop; render `<SuggestedCutPlanes>` in `SceneContents`.
+- Modify `src/App.tsx` — compute the suggested part's bbox; pass `{ cuts, bbox }` to the Viewer.
+- Tests: `tests/plane-transform.test.ts` (the extracted math). No jsdom test for the R3F component — it
+  matches the repo convention where `CutPlane`/`DowelMarkers` are R3F/WebGL and are covered by their pure
+  helpers + the smoke doc, not jsdom (there is no R3F test renderer and the "no new deps" constraint forbids
+  adding one). `planeTransform` carries the real logic and is fully unit-tested.
+
+---
+
+### Task 1: Extract `planeTransform` (shared plane placement math)
+
+**Files:**
+- Create: `src/lib/plane-transform.ts`
+- Modify: `src/components/CutPlane.tsx` (lines 17-27 — replace the inline `useMemo` body with a call)
+- Test: `tests/plane-transform.test.ts`
+
+**Interfaces:**
+- Produces: `planeTransform(plane: CutPlaneSpec, bbox: THREE.Box3): { position: THREE.Vector3; quaternion: THREE.Quaternion; size: number }`.
+  `position` = the point on the plane closest to the bbox center; `quaternion` rotates a `+Z` plane to the
+  plane normal; `size` = `max(bbox extents) * 1.5`. (This is exactly `CutPlane`'s current math.)
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/plane-transform.test.ts
+import { describe, it, expect } from "vitest";
+import * as THREE from "three";
+import { planeTransform } from "../src/lib/plane-transform";
+import type { CutPlaneSpec } from "../src/types";
+
+const bboxAround = (cx: number, cy: number, cz: number, half: number) =>
+  new THREE.Box3(
+    new THREE.Vector3(cx - half, cy - half, cz - half),
+    new THREE.Vector3(cx + half, cy + half, cz + half),
+  );
+
+describe("planeTransform", () => {
+  it("places a Z-normal plane at its constant and sizes to 1.5× the max extent", () => {
+    const plane: CutPlaneSpec = { normal: [0, 0, 1], constant: 5, axisSnap: "z" };
+    const { position, quaternion, size } = planeTransform(plane, bboxAround(0, 0, 0, 5));
+    expect(position.z).toBeCloseTo(5, 5);
+    expect(position.x).toBeCloseTo(0, 5);
+    expect(position.y).toBeCloseTo(0, 5);
+    expect(size).toBeCloseTo(15, 5); // (10) * 1.5
+    // +Z → +Z is identity
+    expect(quaternion.x).toBeCloseTo(0, 5);
+    expect(quaternion.y).toBeCloseTo(0, 5);
+    expect(quaternion.z).toBeCloseTo(0, 5);
+    expect(quaternion.w).toBeCloseTo(1, 5);
+  });
+
+  it("projects the bbox center onto an X-normal plane", () => {
+    const plane: CutPlaneSpec = { normal: [1, 0, 0], constant: 0, axisSnap: "x" };
+    const { position, quaternion } = planeTransform(plane, bboxAround(2, 0, 0, 3));
+    expect(position.x).toBeCloseTo(0, 5); // center (2,0,0) projected onto x=0
+    // +Z rotated to +X: applying the quaternion to (0,0,1) yields (±1,0,0)
+    const dir = new THREE.Vector3(0, 0, 1).applyQuaternion(quaternion);
+    expect(Math.abs(dir.x)).toBeCloseTo(1, 5);
+  });
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL** (module not found)
+
+Run: `npx vitest run tests/plane-transform.test.ts`
+
+- [ ] **Step 3: Implement (copy CutPlane's math verbatim)**
+
+```ts
+// src/lib/plane-transform.ts
+import * as THREE from "three";
+import type { CutPlaneSpec } from "../types";
+
+/** Placement of a translucent plane gizmo for a cut spec, sized past the part bbox.
+ *  Shared by CutPlane (active gizmo) and SuggestedCutPlanes (bed-cut preview). */
+export function planeTransform(
+  plane: CutPlaneSpec,
+  bbox: THREE.Box3,
+): { position: THREE.Vector3; quaternion: THREE.Quaternion; size: number } {
+  const n = new THREE.Vector3(...plane.normal).normalize();
+  const center = bbox.getCenter(new THREE.Vector3());
+  // Closest point on plane (n · p = constant) to the bbox center.
+  const signedDist = n.dot(center) - plane.constant;
+  const position = center.clone().sub(n.clone().multiplyScalar(signedDist));
+  const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+  const sizeVec = bbox.getSize(new THREE.Vector3());
+  const size = Math.max(sizeVec.x, sizeVec.y, sizeVec.z) * 1.5;
+  return { position, quaternion, size };
+}
+```
+
+- [ ] **Step 4: Run — expect PASS**
+
+Run: `npx vitest run tests/plane-transform.test.ts`
+
+- [ ] **Step 5: Refactor `CutPlane.tsx` to consume it**
+
+Replace the `useMemo` body (currently lines 17-27) so it delegates — behavior unchanged:
+```tsx
+import { useMemo } from "react";
+import * as THREE from "three";
+import type { CutPlaneSpec } from "../types";
+import { planeTransform } from "../lib/plane-transform";
+// ...Props unchanged...
+  const { position, quaternion, size } = useMemo(
+    () => planeTransform(plane, bbox),
+    [plane, bbox],
+  );
+```
+(Leave the JSX below unchanged — the cyan `<meshBasicMaterial>` + edges stay.)
+
+- [ ] **Step 6: Run the full suite — expect PASS (no CutPlane regression)**
+
+Run: `npm run test`
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/lib/plane-transform.ts tests/plane-transform.test.ts src/components/CutPlane.tsx
+git commit -m "refactor(preview): extract planeTransform — shared gizmo placement math"
+```
+
+---
+
+### Task 2: `SuggestedCutPlanes` component
+
+**Files:**
+- Create: `src/components/SuggestedCutPlanes.tsx`
+- Test: none in jsdom (R3F/WebGL, matches `CutPlane`/`DowelMarkers`; logic is in `planeTransform`, tested in Task 1; rendering is smoke-verified in Task 4).
+
+**Interfaces:**
+- `SuggestedCutPlanes` props: `{ cuts: CutPlaneSpec[]; bbox: THREE.Box3 }`. Renders one translucent
+  **amber** (`#f59e0b`, distinct from the active gizmo's cyan `#22d3ee`), non-interactive
+  (`depthWrite={false}`, no `onClick`) plane per cut, placed via `planeTransform`. Renders nothing for an
+  empty `cuts` array.
+
+- [ ] **Step 1: Implement**
+
+```tsx
+// src/components/SuggestedCutPlanes.tsx
+import * as THREE from "three";
+import type { CutPlaneSpec } from "../types";
+import { planeTransform } from "../lib/plane-transform";
+
+type Props = {
+  cuts: CutPlaneSpec[];
+  bbox: THREE.Box3;
+};
+
+/** Read-only amber gizmos for the pending fit-to-printer suggested cut planes. */
+export function SuggestedCutPlanes({ cuts, bbox }: Props) {
+  return (
+    <>
+      {cuts.map((plane, i) => {
+        const { position, quaternion, size } = planeTransform(plane, bbox);
+        return (
+          <group key={i} position={position} quaternion={quaternion}>
+            <mesh>
+              <planeGeometry args={[size, size]} />
+              <meshBasicMaterial color="#f59e0b" transparent opacity={0.2} side={THREE.DoubleSide} depthWrite={false} />
+            </mesh>
+            <lineSegments>
+              <edgesGeometry args={[new THREE.PlaneGeometry(size, size)]} />
+              <lineBasicMaterial color="#d97706" />
+            </lineSegments>
+          </group>
+        );
+      })}
+    </>
+  );
+}
+```
+
+- [ ] **Step 2: Run — typecheck + suite green (no test added)**
+
+Run: `npm run typecheck && npm run test`
+Expected: PASS (no regressions).
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add src/components/SuggestedCutPlanes.tsx
+git commit -m "feat(preview): SuggestedCutPlanes — read-only amber bed-cut gizmos"
+```
+
+---
+
+### Task 3: Wire the preview into Viewer + App
+
+**Files:**
+- Modify: `src/components/Viewer.tsx` (new `suggestedCuts` prop on `ViewerProps` + `SceneContentsProps`; render `<SuggestedCutPlanes>` in `SceneContents`)
+- Modify: `src/App.tsx` (compute the suggested part's bbox; pass `{ cuts, bbox }` to `<Viewer>`)
+- Test: none (integration; covered by Task 1 unit + the smoke doc)
+
+**Interfaces:**
+- `Viewer` gains `suggestedCuts?: { cuts: CutPlaneSpec[]; bbox: THREE.Box3 } | null` — mirrors the existing
+  `cutPreview?: { plane; bbox } | null` prop shape. Renders `<SuggestedCutPlanes cuts={...} bbox={...} />`
+  in `SceneContents` when non-null and `cuts.length > 0`.
+
+- [ ] **Step 1: Viewer — thread the prop and render**
+
+In `Viewer.tsx`: import `SuggestedCutPlanes`; add `suggestedCuts?: { cuts: CutPlaneSpec[]; bbox: THREE.Box3 } | null;`
+to both `ViewerProps` and `SceneContentsProps`; destructure it in `Viewer` (default `null`) and in
+`SceneContents`; pass it through in the `<SceneContents ... />` render. Inside `SceneContents`'s JSX, next to
+the existing `{cutPreview && (<CutPlane .../>)}` block, add:
+```tsx
+{suggestedCuts && suggestedCuts.cuts.length > 0 && (
+  <SuggestedCutPlanes cuts={suggestedCuts.cuts} bbox={suggestedCuts.bbox} />
+)}
+```
+
+- [ ] **Step 2: App — compute the suggested part's bbox and pass it**
+
+In `App.tsx`, after the `suggestedCuts` state, add a memo for the target part's bbox (the suggested part may
+differ from `activePart`, so resolve by `partId`):
+```tsx
+const suggestedBbox = useMemo(() => {
+  if (!suggestedCuts) return null;
+  const p = session.session.parts.get(suggestedCuts.partId);
+  if (!p) return null;
+  return new THREE.Box3().setFromObject(p.group);
+}, [suggestedCuts, session.session.parts]);
+```
+Then in the `<Viewer ... />` render (next to `cutPreview={...}`), add:
+```tsx
+suggestedCuts={suggestedCuts && suggestedBbox ? { cuts: suggestedCuts.cuts, bbox: suggestedBbox } : null}
+```
+(The existing Apply/Cancel/Escape paths already `setSuggestedCuts(null)`, which clears the gizmos — no
+extra teardown needed.)
+
+- [ ] **Step 3: Verify manually + suite**
+
+Run: `npm run dev:web` — load a model larger than the selected printer volume, pick a small printer preset,
+click "Suggest cuts": amber plane(s) appear where the splits land; Cancel/Apply/Esc removes them; the active
+cyan cut-plane gizmo (when cutting) is still visibly distinct. Then:
+Run: `npm run test`
+Expected: all pass.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/components/Viewer.tsx src/App.tsx
+git commit -m "feat(preview): wire suggested-cut gizmos into the scene"
+```
+
+---
+
+### Task 4: P3-M2 verification + smoke doc
+
+- [ ] **Step 1:** `npm run test && npm run typecheck` → PASS.
+- [ ] **Step 2:** `npm run build:web && npm run build` → both succeed.
+- [ ] **Step 3:** Write `docs/p3-m2-bedcut-preview-smoke-test.md` (existing style): load an oversized model,
+  Suggest cuts, confirm N amber planes appear at the split locations, distinct from the cyan active gizmo,
+  non-interactive (clicks pass through), and cleared by Apply/Cancel/Escape; legible in light+dark scene.
+- [ ] **Step 4:** `git add docs/p3-m2-bedcut-preview-smoke-test.md && git commit -m "docs(p3-m2): bed-cut preview smoke checklist"`
+- [ ] **STOP — pause for user review. P3-M2 completes Phase 3.**
 
 ---
 
@@ -480,6 +732,9 @@ Expand to full TDD detail after P3-M1 review. Locked interfaces:
 
 - Overhang heatmap: pure severity/ramp → Task 1 ✅; shader material → Task 2 ✅; apply/restore → Task 3 ✅;
   toggle + slider + legend → Task 4 ✅; scene wiring + threshold live + restore-on-off + shortcut → Task 5 ✅.
-- Bed-cut preview (read-only planes) → P3-M2 ✅.
+- Bed-cut preview (read-only planes) → P3-M2: shared `planeTransform` (extracted + tested) → Task 1 ✅;
+  `SuggestedCutPlanes` amber gizmos → Task 2 ✅; Viewer/App wiring around the existing suggest flow → Task 3 ✅.
 - Web-only / no cut-engine → all tasks scene/UI ✅. Both-build gate → each milestone verify ✅. GLSL-mirrors-TS
   ramp → Tasks 1+2 use the identical stops, tied by comment ✅. Non-destructive restore → Task 3 + Task 5 ✅.
+- No new deps → P3-M2 reuses `CutPlane`'s math (no R3F test renderer added); component rendering is
+  smoke-verified, its logic unit-tested via `planeTransform` ✅.
