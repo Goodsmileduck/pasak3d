@@ -38,4 +38,11 @@ describe("CutPanel", () => {
     await userEvent.selectOptions(screen.getByLabelText(/connector/i), "dovetail");
     expect(onConnector).toHaveBeenCalledWith("dovetail");
   });
+
+  it("calls onConnectorTestFit when the test-fit button is clicked", async () => {
+    const onTestFit = vi.fn();
+    render(<CutPanel {...baseProps} connectorId="snap-pin" onConnectorTestFit={onTestFit} />);
+    await userEvent.click(screen.getByRole("button", { name: /test.?fit/i }));
+    expect(onTestFit).toHaveBeenCalled();
+  });
 });

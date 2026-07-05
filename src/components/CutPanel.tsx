@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { CutPlaneSpec, TolerancePreset, Dowel, JointShape, JointPolarity } from "../types";
 import { JOINT_SHAPES, JOINT_POLARITIES } from "../types";
-import { DEFAULT_CONNECTOR_ID, listByCategory } from "../lib/cut/connectors/registry";
+import { DEFAULT_CONNECTOR_ID, getConnector, listByCategory } from "../lib/cut/connectors/registry";
 import type { ConnectorCategory } from "../lib/cut/connectors/types";
 
 /** "separate-peg" → "Separate peg" */
@@ -21,6 +21,7 @@ type Props = {
   busy: boolean;
   connectorId?: string;
   onConnectorChange?: (id: string) => void;
+  onConnectorTestFit?: () => void;
   jointShape?: JointShape;
   onJointShapeChange?: (shape: JointShape) => void;
   jointPolarity?: JointPolarity;
@@ -38,6 +39,7 @@ export function CutPanel({
   busy,
   connectorId = DEFAULT_CONNECTOR_ID,
   onConnectorChange,
+  onConnectorTestFit,
   jointShape = "cylinder",
   onJointShapeChange,
   jointPolarity = "separate-peg",
@@ -52,11 +54,14 @@ export function CutPanel({
   const [dowelDiameter, setDowelDiameter] = useState(5);
   const [dowelLength, setDowelLength] = useState(20);
   const [tolerance, setTolerance] = useState<TolerancePreset>("pla-tight");
-  const [connectorCategory, setConnectorCategory] = useState<ConnectorCategory>("keyed");
+  const [connectorCategory, setConnectorCategory] = useState<ConnectorCategory>(
+    () => getConnector(connectorId)?.category ?? "keyed",
+  );
   const connectors = listByCategory(connectorCategory);
   const selectedConnectorId = connectors.some((c) => c.id === connectorId)
     ? connectorId
     : connectors[0]?.id ?? "";
+  const selectedConnector = getConnector(selectedConnectorId);
 
   const shapeForConnector = (id: string, fallback: JointShape): JointShape =>
     JOINT_SHAPES.includes(id as JointShape) ? id as JointShape : fallback;
@@ -149,25 +154,40 @@ export function CutPanel({
           </div>
         </div>
         <label className="block text-xs mt-2">Connector</label>
-        <select
-          aria-label="Connector"
-          value={selectedConnectorId}
-          disabled={connectors.length === 0}
-          onChange={(e) => {
-            const next = e.target.value;
-            const nextShape = shapeForConnector(next, jointShape);
-            onConnectorChange?.(next);
-            onJointShapeChange?.(nextShape);
-            fire(onPreviewChange, nextShape, jointPolarity, next);
-          }}
-          className="w-full border border-[var(--border)] rounded px-2 py-1 bg-[var(--surface)] text-[var(--ink)]"
-        >
-          {connectors.length === 0 ? (
-            <option value="">No connectors</option>
-          ) : connectors.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
+        <div className="flex gap-2">
+          <select
+            aria-label="Connector"
+            value={selectedConnectorId}
+            disabled={connectors.length === 0}
+            onChange={(e) => {
+              const next = e.target.value;
+              const nextShape = shapeForConnector(next, jointShape);
+              onConnectorChange?.(next);
+              onJointShapeChange?.(nextShape);
+              fire(onPreviewChange, nextShape, jointPolarity, next);
+            }}
+            className="min-w-0 flex-1 border border-[var(--border)] rounded px-2 py-1 bg-[var(--surface)] text-[var(--ink)]"
+          >
+            {connectors.length === 0 ? (
+              <option value="">No connectors</option>
+            ) : connectors.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="btn-neutral px-2 py-1 text-xs shrink-0"
+            onClick={onConnectorTestFit}
+            disabled={!onConnectorTestFit || connectors.length === 0}
+          >
+            Test-fit
+          </button>
+        </div>
+        {selectedConnector?.defaults.clearance != null && (
+          <p className="text-[11px] text-[var(--ink-muted)] mt-1 leading-snug">
+            Default clearance {selectedConnector.defaults.clearance}mm
+          </p>
+        )}
         <label className="block text-xs mt-2">Polarity</label>
         <select
           aria-label="Joint polarity"

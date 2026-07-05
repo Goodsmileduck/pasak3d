@@ -18,9 +18,9 @@ import { useTheme } from "./hooks/useTheme";
 import { loadModel } from "./lib/loaders";
 import { useCutSession } from "./hooks/useCutSession";
 import { autoPlaceCutDowels } from "./lib/cut/auto-place-cut-dowels";
-import { runTestFit } from "./lib/cut/cut-client";
+import { runConnectorTestFit, runTestFit } from "./lib/cut/cut-client";
 import { TESTFIT_DEFAULTS } from "./lib/cut/test-fit";
-import { DEFAULT_CONNECTOR_ID } from "./lib/cut/connectors/registry";
+import { DEFAULT_CONNECTOR_ID, getConnector } from "./lib/cut/connectors/registry";
 import { buildZipExport } from "./lib/exporters/zip-export";
 import { exportToMulti3MF } from "./lib/exporters/3mf";
 import { saveBytes } from "./lib/exporters/save";
@@ -249,6 +249,20 @@ export default function App() {
     }
   }, [jointShape]);
 
+  const onConnectorTestFit = useCallback(async () => {
+    try {
+      setError(null);
+      const items = await runConnectorTestFit(connectorId, {
+        ...TESTFIT_DEFAULTS,
+        baseClearance: getConnector(connectorId)?.defaults.clearance ?? TESTFIT_DEFAULTS.baseClearance,
+      });
+      const bytes = buildZipExport(items, []);
+      await saveBytes("pasak-connector-testfit.zip", "application/zip", bytes);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [connectorId]);
+
   const onLabelPart = useCallback((partId: PartId) => {
     const part = session.session.parts.get(partId);
     if (!part || part.isDowel) return;
@@ -437,6 +451,7 @@ export default function App() {
             busy={session.busy}
             connectorId={connectorId}
             onConnectorChange={onConnectorChange}
+            onConnectorTestFit={onConnectorTestFit}
             jointShape={jointShape}
             onJointShapeChange={setJointShape}
             jointPolarity={jointPolarity}
