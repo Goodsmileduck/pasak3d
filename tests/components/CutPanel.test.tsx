@@ -46,6 +46,13 @@ describe("CutPanel", () => {
     expect(onTestFit).toHaveBeenCalled();
   });
 
+  it("hides the polarity control for non-M1 connectors (it has no effect there)", async () => {
+    render(<CutPanel {...baseProps} connectorId="cylinder" />);
+    expect(screen.queryByLabelText(/joint polarity/i)).not.toBeNull(); // M1 shape → shown
+    await userEvent.click(screen.getByRole("button", { name: /^snap$/i }));
+    expect(screen.queryByLabelText(/joint polarity/i)).toBeNull();     // snap connector → hidden
+  });
+
   it("switching category resyncs the connector so App state matches the display", async () => {
     // A keyed connector is selected; switching to Snap must adopt the first snap
     // connector (else Cut/Test-fit would act on the stale keyed id shown by App).

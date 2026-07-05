@@ -18,7 +18,7 @@ import { useTheme } from "./hooks/useTheme";
 import { loadModel } from "./lib/loaders";
 import { useCutSession } from "./hooks/useCutSession";
 import { autoPlaceCutDowels } from "./lib/cut/auto-place-cut-dowels";
-import { runConnectorTestFit, runTestFit } from "./lib/cut/cut-client";
+import { runConnectorTestFit } from "./lib/cut/cut-client";
 import { TESTFIT_DEFAULTS } from "./lib/cut/test-fit";
 import { DEFAULT_CONNECTOR_ID, getConnector } from "./lib/cut/connectors/registry";
 import { buildZipExport } from "./lib/exporters/zip-export";
@@ -177,10 +177,14 @@ export default function App() {
       length,
       minSpacing: 2,
     }).map((d) => ({ ...d, shape, connectorId: selectedConnectorId, polarity }));
-    // Replace auto dowels but preserve user-added manual ones.
+    // Replace auto dowels but preserve user-added manual ones — re-stamping their
+    // connector to the current selection so the cut never sees a mixed-connector set
+    // (applyConnectors rejects those).
     setPreviewDowels((prev) => [
       ...placed,
-      ...prev.filter((d) => d.source === "manual"),
+      ...prev
+        .filter((d) => d.source === "manual")
+        .map((d) => ({ ...d, shape, connectorId: selectedConnectorId, polarity })),
     ]);
   };
 
@@ -238,18 +242,10 @@ export default function App() {
     setShowExportDialog(true);
   };
 
+  // Connector-aware test-fit sweep, seeded from the selected connector's default
+  // clearance. Both the toolbar and the cut-panel buttons use this so they never
+  // diverge (the old shape-based toolbar sweep ignored the selected connector).
   const onTestFit = useCallback(async () => {
-    try {
-      setError(null);
-      const items = await runTestFit({ ...TESTFIT_DEFAULTS, shape: jointShape });
-      const bytes = buildZipExport(items, []);
-      await saveBytes("pasak-testfit.zip", "application/zip", bytes);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, [jointShape]);
-
-  const onConnectorTestFit = useCallback(async () => {
     try {
       setError(null);
       const items = await runConnectorTestFit(connectorId, {
@@ -257,7 +253,7 @@ export default function App() {
         baseClearance: getConnector(connectorId)?.defaults.clearance ?? TESTFIT_DEFAULTS.baseClearance,
       });
       const bytes = buildZipExport(items, []);
-      await saveBytes("pasak-connector-testfit.zip", "application/zip", bytes);
+      await saveBytes("pasak-testfit.zip", "application/zip", bytes);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -451,7 +447,7 @@ export default function App() {
             busy={session.busy}
             connectorId={connectorId}
             onConnectorChange={onConnectorChange}
-            onConnectorTestFit={onConnectorTestFit}
+            onConnectorTestFit={onTestFit}
             jointShape={jointShape}
             onJointShapeChange={setJointShape}
             jointPolarity={jointPolarity}

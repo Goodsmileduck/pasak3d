@@ -201,21 +201,27 @@ export function CutPanel({
             Default clearance {selectedConnector.defaults.clearance}mm
           </p>
         )}
-        <label className="block text-xs mt-2">Polarity</label>
-        <select
-          aria-label="Joint polarity"
-          value={jointPolarity}
-          onChange={(e) => {
-            const next = e.target.value as JointPolarity;
-            onJointPolarityChange?.(next);
-            fire(onPreviewChange, jointShape, next);
-          }}
-          className="w-full border border-[var(--border)] rounded px-2 py-1"
-        >
-          {JOINT_POLARITIES.map((p) => (
-            <option key={p} value={p}>{titleCase(p)}</option>
-          ))}
-        </select>
+        {/* Polarity only affects the M1 keyed shapes (separate-peg/male/female/magnet);
+            catalog connectors define their own male/female geometry, so hide it there. */}
+        {JOINT_SHAPES.includes(selectedConnectorId as JointShape) && (
+          <>
+            <label className="block text-xs mt-2">Polarity</label>
+            <select
+              aria-label="Joint polarity"
+              value={jointPolarity}
+              onChange={(e) => {
+                const next = e.target.value as JointPolarity;
+                onJointPolarityChange?.(next);
+                fire(onPreviewChange, jointShape, next);
+              }}
+              className="w-full border border-[var(--border)] rounded px-2 py-1"
+            >
+              {JOINT_POLARITIES.map((p) => (
+                <option key={p} value={p}>{titleCase(p)}</option>
+              ))}
+            </select>
+          </>
+        )}
         <p className="text-[11px] text-[var(--ink-muted)] mt-2 leading-snug">
           Click the cut plane to add a dowel · drag to move · × to remove
         </p>
