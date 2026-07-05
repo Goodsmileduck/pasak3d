@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import * as THREE from "three";
 import type { CutPlaneSpec } from "../types";
+import { planeTransform } from "../lib/plane-transform";
 
 type Props = {
   plane: CutPlaneSpec;
@@ -14,17 +15,10 @@ type Props = {
  * Sized to extend slightly past the part bbox.
  */
 export function CutPlane({ plane, bbox, onClick }: Props) {
-  const { position, quaternion, size } = useMemo(() => {
-    const n = new THREE.Vector3(...plane.normal).normalize();
-    const center = bbox.getCenter(new THREE.Vector3());
-    // Closest point on plane (n · p = constant) to the bbox center.
-    const signedDist = n.dot(center) - plane.constant;
-    const pos = center.clone().sub(n.clone().multiplyScalar(signedDist));
-    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
-    const sizeVec = bbox.getSize(new THREE.Vector3());
-    const planeSize = Math.max(sizeVec.x, sizeVec.y, sizeVec.z) * 1.5;
-    return { position: pos, quaternion: q, size: planeSize };
-  }, [plane, bbox]);
+  const { position, quaternion, size } = useMemo(
+    () => planeTransform(plane, bbox),
+    [plane, bbox],
+  );
 
   return (
     <group position={position} quaternion={quaternion}>
