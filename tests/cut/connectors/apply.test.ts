@@ -70,6 +70,29 @@ describe("applyConnectors", () => {
     b.delete();
   });
 
+  it("snap-key subtracts a socket from both halves and emits one key piece", () => {
+    const j = {
+      id: "j",
+      position: [0, 0, 0] as [number, number, number],
+      axis: [0, 0, 1] as [number, number, number],
+      diameter: 8,
+      length: 12,
+      source: "auto" as const,
+      connectorId: "snap-key",
+    };
+    const a = box();
+    const b = box();
+    const r = applyConnectors(M, a, b, [j], "pla-tight");
+    expect(r.partA.status()).toBe("NoError");
+    expect(r.partA.volume()).toBeLessThan(30 * 30 * 30);
+    expect(r.partB.volume()).toBeLessThan(30 * 30 * 30);
+    expect(r.jointPieces.length).toBe(1);       // separate-piece → one printed key
+    expect(r.jointPieces[0].volume()).toBeGreaterThan(0);
+    r.partA.delete(); r.partB.delete();
+    r.jointPieces.forEach((pc: any) => pc.delete());
+    a.delete(); b.delete();
+  });
+
   it("M1 shapes still delegate unchanged after adding the generic path", () => {
     const j = { ...joint, connectorId: "cube" };
     const viaConnector = applyConnectors(M, box(), box(), [j], "pla-tight");
