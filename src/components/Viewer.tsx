@@ -6,6 +6,7 @@ import type { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { BuildPlate } from "./BuildPlate";
 import { AxisCube } from "./AxisCube";
 import { CutPlane } from "./CutPlane";
+import { SuggestedCutPlanes } from "./SuggestedCutPlanes";
 import { DowelMarkers } from "./DowelMarkers";
 import { centerOnXY } from "../lib/scene";
 import { makeHeatmapMaterial } from "../lib/heatmap-material";
@@ -29,6 +30,7 @@ interface ViewerProps {
   cutParts?: CutPartEntry[];
   /** M2 mode: cut plane preview */
   cutPreview?: { plane: CutPlaneSpec; bbox: THREE.Box3 } | null;
+  suggestedCuts?: { cuts: CutPlaneSpec[]; bbox: THREE.Box3 } | null;
   /** M2 mode: dowel markers */
   dowels?: Dowel[];
   /** Click on the cut plane (world-space point). Used to add manual dowels. */
@@ -53,6 +55,7 @@ interface SceneContentsProps {
   rootGroup: THREE.Group | null;
   cutParts?: CutPartEntry[];
   cutPreview?: { plane: CutPlaneSpec; bbox: THREE.Box3 } | null;
+  suggestedCuts?: { cuts: CutPlaneSpec[]; bbox: THREE.Box3 } | null;
   dowels?: Dowel[];
   onPlaneClick?: (point: THREE.Vector3) => void;
   onDeleteDowel?: (id: string) => void;
@@ -71,6 +74,7 @@ function SceneContents({
   rootGroup,
   cutParts,
   cutPreview,
+  suggestedCuts,
   dowels,
   onPlaneClick,
   onDeleteDowel,
@@ -288,6 +292,10 @@ function SceneContents({
         <CutPlane plane={cutPreview.plane} bbox={cutPreview.bbox} onClick={onPlaneClick} />
       )}
 
+      {suggestedCuts && suggestedCuts.cuts.length > 0 && (
+        <SuggestedCutPlanes cuts={suggestedCuts.cuts} bbox={suggestedCuts.bbox} />
+      )}
+
       {/* Dowel markers */}
       {dowels && dowels.length > 0 && (
         <DowelMarkers
@@ -324,6 +332,7 @@ export function Viewer({
   rootGroup = null,
   cutParts,
   cutPreview,
+  suggestedCuts = null,
   dowels,
   onPlaneClick,
   onDeleteDowel,
@@ -372,6 +381,7 @@ export function Viewer({
           rootGroup={rootGroup}
           cutParts={cutParts}
           cutPreview={cutPreview}
+          suggestedCuts={suggestedCuts}
           dowels={dowels}
           onPlaneClick={onPlaneClick}
           onDeleteDowel={onDeleteDowel}

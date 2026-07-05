@@ -60,6 +60,12 @@ export default function App() {
   const [previewPlane, setPreviewPlane] = useState<CutPlaneSpec | null>(null);
   const [previewDowels, setPreviewDowels] = useState<Dowel[]>([]);
   const [suggestedCuts, setSuggestedCuts] = useState<{ partId: PartId; cuts: CutPlaneSpec[] } | null>(null);
+  const suggestedBbox = useMemo(() => {
+    if (!suggestedCuts) return null;
+    const p = session.session.parts.get(suggestedCuts.partId);
+    if (!p) return null;
+    return new THREE.Box3().setFromObject(p.group);
+  }, [suggestedCuts, session.session.parts]);
   const [explodeFactor, setExplodeFactor] = useState(0);
   const [overhangOn, setOverhangOn] = useState(false);
   const [overhangThreshold, setOverhangThreshold] = useState(45);
@@ -511,6 +517,7 @@ export default function App() {
               rootGroup={hasCutParts ? null : (importRoot?.group ?? null)}
               cutParts={cutPartsForViewer}
               cutPreview={previewPlane && bbox ? { plane: previewPlane, bbox } : null}
+              suggestedCuts={suggestedCuts && suggestedBbox ? { cuts: suggestedCuts.cuts, bbox: suggestedBbox } : null}
               dowels={previewDowels}
               onPlaneClick={onPlaneClick}
               onDeleteDowel={onDeleteDowel}
