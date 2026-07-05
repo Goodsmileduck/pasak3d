@@ -14,6 +14,11 @@ function triIndices(geom: THREE.BufferGeometry, f: number): [number, number, num
 function posKey(x: number, y: number, z: number): string {
   return `${Math.round(x * QUANT)},${Math.round(y * QUANT)},${Math.round(z * QUANT)}`;
 }
+function getOrCreate<K, V>(map: Map<K, V>, key: K, make: () => V): V {
+  let v = map.get(key);
+  if (!v) { v = make(); map.set(key, v); }
+  return v;
+}
 
 /** Largest-eigenvector power iteration on a symmetric 3×3 (row-major m[9]). Deterministic seed. */
 function powerIter(m: number[], sx: number, sy: number, sz: number): THREE.Vector3 {
@@ -89,8 +94,7 @@ export function seamPlanes(geometry: THREE.BufferGeometry, labels: Int32Array): 
     for (let e = 0; e < 3; e++) {
       const [p1, k1] = trio[e], [p2, k2] = trio[(e + 1) % 3];
       const ek = k1 < k2 ? `${k1}#${k2}` : `${k2}#${k1}`;
-      let rec = edgeMap.get(ek);
-      if (!rec) { rec = { faces: [], a: p1.clone(), b: p2.clone() }; edgeMap.set(ek, rec); }
+      const rec = getOrCreate(edgeMap, ek, () => ({ faces: [], a: p1.clone(), b: p2.clone() }));
       rec.faces.push(f);
     }
   }
@@ -103,8 +107,7 @@ export function seamPlanes(geometry: THREE.BufferGeometry, labels: Int32Array): 
     const rf = labels[f], rg = labels[g];
     if (rf === rg) continue;
     const key = rf < rg ? `${rf}-${rg}` : `${rg}-${rf}`;
-    let arr = pairPts.get(key);
-    if (!arr) { arr = []; pairPts.set(key, arr); }
+    const arr = getOrCreate(pairPts, key, () => [] as THREE.Vector3[]);
     arr.push(rec.a, rec.b);
   }
 
