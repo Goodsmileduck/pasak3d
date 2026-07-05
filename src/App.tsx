@@ -9,6 +9,7 @@ import { CutPanel } from "./components/CutPanel";
 import { PartsTree } from "./components/PartsTree";
 import { PrinterPanel } from "./components/PrinterPanel";
 import { ExplodedView } from "./components/ExplodedView";
+import { HeatmapControls } from "./components/HeatmapControls";
 import { ExportDialog, type ExportOptions } from "./components/ExportDialog";
 import { HelpOverlay } from "./components/HelpOverlay";
 import { UpdateNotification } from "./components/UpdateNotification";
@@ -60,6 +61,8 @@ export default function App() {
   const [previewDowels, setPreviewDowels] = useState<Dowel[]>([]);
   const [suggestedCuts, setSuggestedCuts] = useState<{ partId: PartId; cuts: CutPlaneSpec[] } | null>(null);
   const [explodeFactor, setExplodeFactor] = useState(0);
+  const [overhangOn, setOverhangOn] = useState(false);
+  const [overhangThreshold, setOverhangThreshold] = useState(45);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [cutAxis, setCutAxis] = useState<"x" | "y" | "z">("x");
@@ -374,6 +377,8 @@ export default function App() {
       "Ctrl+Shift+z": session.redo,
       "Ctrl+e": () => hasCutParts && setShowExportDialog(true),
       "Ctrl+E": () => hasCutParts && setShowExportDialog(true),
+      "V": () => setOverhangOn((v) => !v),
+      "v": () => setOverhangOn((v) => !v),
       "?": () => setShowHelp((s) => !s),
     },
     [session.undo, session.redo, hasCutParts, activePart, handleOpen],
@@ -401,12 +406,17 @@ export default function App() {
         onRedo={session.redo}
         canUndo={session.canUndo}
         canRedo={session.canRedo}
+        overhangOn={overhangOn}
+        onToggleOverhang={() => setOverhangOn((v) => !v)}
         isDark={isDark}
         onToggleTheme={toggleTheme}
         printerSlot={
           <>
             {hasCutParts && (
               <ExplodedView value={explodeFactor} onChange={setExplodeFactor} />
+            )}
+            {overhangOn && (
+              <HeatmapControls threshold={overhangThreshold} onThresholdChange={setOverhangThreshold} />
             )}
             <PrinterPanel
               selected={session.session.printer}
@@ -506,6 +516,8 @@ export default function App() {
               onDeleteDowel={onDeleteDowel}
               onMoveDowel={onMoveDowel}
               explodeFactor={explodeFactor}
+              overhangOn={overhangOn}
+              overhangThreshold={overhangThreshold}
               isDark={isDark}
             />
           )}

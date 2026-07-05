@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls as DreiOrbitControls } from "@react-three/drei";
 import * as THREE from "three";
@@ -8,6 +8,8 @@ import { AxisCube } from "./AxisCube";
 import { CutPlane } from "./CutPlane";
 import { DowelMarkers } from "./DowelMarkers";
 import { centerOnXY } from "../lib/scene";
+import { makeHeatmapMaterial } from "../lib/heatmap-material";
+import { applyHeatmap, clearHeatmap } from "../lib/heatmap-apply";
 import type { CutPlaneSpec, Dowel } from "../types";
 import type { PlateMode } from "./plateModes";
 
@@ -37,6 +39,8 @@ interface ViewerProps {
   onMoveDowel?: (id: string, point: [number, number, number]) => void;
   /** M3: exploded-view factor 0..1 — moves each part radially outward. */
   explodeFactor?: number;
+  overhangOn?: boolean;
+  overhangThreshold?: number;
   isDark?: boolean;
   wireframe?: boolean;
   plateMode?: PlateMode;
@@ -54,6 +58,8 @@ interface SceneContentsProps {
   onDeleteDowel?: (id: string) => void;
   onMoveDowel?: (id: string, point: [number, number, number]) => void;
   explodeFactor: number;
+  overhangOn?: boolean;
+  overhangThreshold?: number;
   isDark: boolean;
   wireframe: boolean;
   plateMode: PlateMode;
@@ -70,6 +76,8 @@ function SceneContents({
   onDeleteDowel,
   onMoveDowel,
   explodeFactor,
+  overhangOn,
+  overhangThreshold,
   isDark,
   wireframe,
   plateMode,
@@ -88,6 +96,19 @@ function SceneContents({
 
   // Determine which groups to render in scene
   const hasCutParts = cutParts && cutParts.length > 0;
+  const heatMat = useMemo(() => makeHeatmapMaterial(overhangThreshold ?? 45), []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    (heatMat.userData.setThreshold as (d: number) => void)(overhangThreshold ?? 45);
+  }, [overhangThreshold, heatMat]);
+
+  useEffect(() => {
+    const groups = (cutParts ?? []).filter((p) => p.visible && !p.isDowel).map((p) => p.group);
+    const all = rootGroup && !hasCutParts ? [rootGroup] : groups;
+    if (overhangOn) all.forEach((g) => applyHeatmap(g, heatMat));
+    else all.forEach((g) => clearHeatmap(g));
+    return () => all.forEach((g) => clearHeatmap(g));
+  }, [overhangOn, cutParts, rootGroup, hasCutParts, heatMat]);
 
   // Single-model mode: add rootGroup to scene
   useEffect(() => {
@@ -308,6 +329,8 @@ export function Viewer({
   onDeleteDowel,
   onMoveDowel,
   explodeFactor = 0,
+  overhangOn = false,
+  overhangThreshold = 45,
   isDark = false,
   wireframe = false,
   plateMode = "grid",
@@ -354,6 +377,8 @@ export function Viewer({
           onDeleteDowel={onDeleteDowel}
           onMoveDowel={onMoveDowel}
           explodeFactor={explodeFactor}
+          overhangOn={overhangOn}
+          overhangThreshold={overhangThreshold}
           isDark={isDark}
           wireframe={wireframe}
           plateMode={plateMode}
