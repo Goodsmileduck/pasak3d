@@ -1,9 +1,91 @@
 import { describe, it, expect } from "vitest";
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { initManifold } from "../../src/lib/cut/manifold";
-import { manifoldToMesh } from "../../src/lib/cut/convert";
+import { manifoldToMesh, meshToManifold } from "../../src/lib/cut/convert";
 import { planeCutMesh } from "../../src/lib/cut/plane-cut";
 import { applyDowels } from "../../src/lib/cut/dowel-apply";
+import { applyConnectors } from "../../src/lib/cut/connectors/apply";
+import { applySeamLabel } from "../../src/lib/cut/joints/labels";
+import { runConnectorTestFit, runCut, runLabel, runSeparate, runTestFit } from "../../src/lib/cut/cut-client";
+import { separateComponents } from "../../src/lib/cut/separate";
+import { generateConnectorTestFit, generateTestFitPairs } from "../../src/lib/cut/test-fit";
+import { getConnector } from "../../src/lib/cut/connectors/registry";
+import type { CutWorkerRequest, CutWorkerResponse, SerializedMesh } from "../../src/workers/cut-worker";
+
+function serialize(man: any): SerializedMesh {
+  const m = man.getMesh();
+  return {
+    positions: new Float32Array(m.vertProperties),
+    indices: new Uint32Array(m.triVerts),
+  };
+}
+
+class CutClientWorker {
+  onmessage: ((e: MessageEvent<CutWorkerResponse>) => void) | null = null;
+
+  constructor(..._args: unknown[]) {}
+
+  postMessage(req: CutWorkerRequest): void {
+    void this.respond(req);
+  }
+
+  private async respond(req: CutWorkerRequest): Promise<void> {
+    const M = await initManifold();
+    if (req.op === "testfit") {
+      const pairs = req.testfit.connectorId
+        ? generateConnectorTestFit(M, getConnector(req.testfit.connectorId)!, req.testfit)
+        : generateTestFitPairs(M, req.testfit);
+      const coupons = pairs.flatMap((p) => [
+        { name: p.maleName, mesh: serialize(p.male) },
+        { name: p.femaleName, mesh: serialize(p.female) },
+      ]);
+      pairs.forEach((p) => { p.male.delete(); p.female.delete(); });
+      this.onmessage?.({ data: { reqId: req.reqId, ok: true, coupons } } as MessageEvent<CutWorkerResponse>);
+      return;
+    }
+    if (req.op === "separate") {
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute("position", new THREE.BufferAttribute(req.meshGeometry.positions, 3));
+      if (req.meshGeometry.indices) geom.setIndex(new THREE.BufferAttribute(req.meshGeometry.indices, 1));
+      const manifolds = separateComponents(M, new THREE.Mesh(geom));
+      const components = manifolds.map(serialize);
+      manifolds.forEach((m) => m.delete());
+      this.onmessage?.({ data: { reqId: req.reqId, ok: true, components } } as MessageEvent<CutWorkerResponse>);
+      return;
+    }
+    if (req.op === "label") {
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute("position", new THREE.BufferAttribute(req.meshGeometry.positions, 3));
+      if (req.meshGeometry.indices) geom.setIndex(new THREE.BufferAttribute(req.meshGeometry.indices, 1));
+      const man = meshToManifold(M, new THREE.Mesh(geom));
+      const labeledMan = applySeamLabel(M, man, req.label.text, req.label, req.label.position, req.label.axis);
+      const labeled = serialize(labeledMan);
+      man.delete();
+      labeledMan.delete();
+      this.onmessage?.({ data: { reqId: req.reqId, ok: true, labeled } } as MessageEvent<CutWorkerResponse>);
+      return;
+    }
+    if (req.op === "cut") {
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute("position", new THREE.BufferAttribute(req.meshGeometry.positions, 3));
+      if (req.meshGeometry.indices) geom.setIndex(new THREE.BufferAttribute(req.meshGeometry.indices, 1));
+      const cut = await planeCutMesh(M, new THREE.Mesh(geom), req.plane);
+      const result = applyConnectors(M, cut.partA.manifold, cut.partB.manifold, req.dowels, req.tolerance);
+      const all = [result.partA, result.partB, ...result.jointPieces];
+      const meshes = all.map(serialize);
+      const [partA, partB, ...dowelPieces] = meshes;
+      if (result.partA !== cut.partA.manifold) cut.partA.manifold.delete();
+      if (result.partB !== cut.partB.manifold) cut.partB.manifold.delete();
+      result.partA.delete();
+      result.partB.delete();
+      result.jointPieces.forEach((p) => p.delete());
+      this.onmessage?.({ data: { reqId: req.reqId, ok: true, partA, partB, dowelPieces } } as MessageEvent<CutWorkerResponse>);
+      return;
+    }
+    throw new Error("CutClientWorker does not handle cut requests");
+  }
+}
 
 describe("cut pipeline (in-process equivalent of worker)", () => {
   it("produces two halves and one dowel piece for a cube cut at X=0", async () => {
@@ -26,5 +108,106 @@ describe("cut pipeline (in-process equivalent of worker)", () => {
     result.partA.delete();
     result.partB.delete();
     for (const p of result.dowelPieces) p.delete();
+  });
+
+  it("runs a cut with a cube joint and returns parts + one peg", async () => {
+    const M = await initManifold();
+    const geom = new THREE.BoxGeometry(10, 10, 10);
+    const mesh = new THREE.Mesh(geom);
+    const cut = await planeCutMesh(M, mesh, { normal: [0, 0, 1], constant: 0, axisSnap: "z" });
+    const result = applyDowels(M, cut.partA.manifold, cut.partB.manifold, [{
+      id: "j", position: [0, 0, 0], axis: [0, 0, 1], diameter: 4, length: 8,
+      source: "auto", shape: "cube", polarity: "separate-peg",
+    }], 0.10);
+    expect(result.partA).toBeDefined();
+    expect(result.dowelPieces.length).toBe(1);
+    expect(result.dowelPieces[0].volume()).toBeCloseTo(4 * 4 * 8, 3);
+
+    if (result.partA !== cut.partA.manifold) cut.partA.manifold.delete();
+    if (result.partB !== cut.partB.manifold) cut.partB.manifold.delete();
+    result.partA.delete();
+    result.partB.delete();
+    for (const p of result.dowelPieces) p.delete();
+  });
+
+  it("runTestFit returns hydrated coupon meshes named A/B", async () => {
+    vi.stubGlobal("Worker", CutClientWorker);
+    const items = await runTestFit({
+      count: 2, step: 0.05, baseClearance: 0.1, cubeSize: 12, keyDepth: 5, keyWidth: 6, shape: "cylinder",
+    });
+    expect(items.length).toBe(4);
+    expect(items.some((i) => i.name.endsWith("_A.stl"))).toBe(true);
+    expect(items.some((i) => i.name.endsWith("_B.stl"))).toBe(true);
+    vi.unstubAllGlobals();
+  });
+
+  it("runConnectorTestFit returns hydrated coupons for a connector", async () => {
+    vi.stubGlobal("Worker", CutClientWorker);
+    const items = await runConnectorTestFit("snap-pin", {
+      count: 2, step: 0.05, baseClearance: 0.2, cubeSize: 14, keyDepth: 6, keyWidth: 8,
+    });
+    expect(items.length).toBe(4);
+    expect(items.some((i) => i.name.includes("snap-pin"))).toBe(true);
+    vi.unstubAllGlobals();
+  });
+
+  it("runSeparate returns one group per connected component", async () => {
+    vi.stubGlobal("Worker", CutClientWorker);
+    const a = new THREE.BoxGeometry(4, 4, 4);
+    const b = new THREE.BoxGeometry(4, 4, 4).translate(20, 0, 0);
+    const mesh = new THREE.Mesh(mergeGeometries([a, b]));
+    const groups = await runSeparate(mesh);
+    expect(groups.length).toBe(2);
+    vi.unstubAllGlobals();
+  });
+
+  it("does not mutate the input mesh geometry when matrixWorld is non-identity", async () => {
+    vi.stubGlobal("Worker", CutClientWorker);
+    const a = new THREE.BoxGeometry(4, 4, 4);
+    const b = new THREE.BoxGeometry(4, 4, 4).translate(20, 0, 0);
+    const mesh = new THREE.Mesh(mergeGeometries([a, b]));
+    // Simulate a part carrying an explode / centering transform.
+    mesh.position.set(5, 6, 7);
+    mesh.updateMatrixWorld(true);
+    const before = Float32Array.from(mesh.geometry.attributes.position.array as Float32Array);
+    await runSeparate(mesh);
+    const after = mesh.geometry.attributes.position.array as Float32Array;
+    expect(Array.from(after)).toEqual(Array.from(before)); // geometry not baked in place
+    vi.unstubAllGlobals();
+  });
+
+  it("runLabel returns a labeled mesh group", async () => {
+    vi.stubGlobal("Worker", CutClientWorker);
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(30, 30, 30));
+    const g = await runLabel(mesh, {
+      text: "A", mode: "emboss", size: 8, depth: 1, position: [0, 0, 15], axis: [0, 0, 1],
+    });
+    expect(g).toBeDefined();
+    expect(g.children.length).toBe(1);
+    vi.unstubAllGlobals();
+  });
+
+  it("runs a cut with a connectorId and returns parts + one piece", async () => {
+    vi.stubGlobal("Worker", CutClientWorker);
+    const cubeMesh = new THREE.Mesh(new THREE.BoxGeometry(10, 10, 10));
+    const plane = { normal: [0, 0, 1] as [number, number, number], constant: 0, axisSnap: "z" as const };
+    const res = await runCut(cubeMesh, plane, [
+      { id: "j", position: [0, 0, 0], axis: [0, 0, 1], diameter: 4, length: 8, source: "auto", connectorId: "cube" },
+    ], "pla-tight");
+    expect(res.partA).toBeDefined();
+    expect(res.dowelPieces.length).toBe(1);
+    vi.unstubAllGlobals();
+  });
+
+  it("runs a cut with the t-slot connector and returns parts + one piece", async () => {
+    vi.stubGlobal("Worker", CutClientWorker);
+    const cubeMesh = new THREE.Mesh(new THREE.BoxGeometry(20, 20, 20));
+    const plane = { normal: [0, 0, 1] as [number, number, number], constant: 0, axisSnap: "z" as const };
+    const res = await runCut(cubeMesh, plane, [
+      { id: "j", position: [0, 0, 0], axis: [0, 0, 1], diameter: 8, length: 8, source: "auto", connectorId: "t-slot" },
+    ], "pla-tight");
+    expect(res.partA).toBeDefined();
+    expect(res.dowelPieces.length).toBe(1);
+    vi.unstubAllGlobals();
   });
 });

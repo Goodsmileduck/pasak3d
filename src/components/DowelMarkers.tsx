@@ -47,6 +47,7 @@ type DragProps = {
 function DraggableDowel({ dowel, plane, controlsRef, onMove, onDelete }: DragProps) {
   const { camera, gl, raycaster } = useThree();
   const dragging = useRef(false);
+  const color = markerColor(dowel);
 
   // Cylinder oriented along the cut normal. (Cylinder is along Y natively → rotate Y → axis.)
   const n = new THREE.Vector3(...dowel.axis).normalize();
@@ -99,7 +100,7 @@ function DraggableDowel({ dowel, plane, controlsRef, onMove, onDelete }: DragPro
       >
         <cylinderGeometry args={[dowel.diameter / 2, dowel.diameter / 2, dowel.length, 24]} />
         <meshBasicMaterial
-          color={dowel.source === "manual" ? "#2b6cff" : "#ea5816"}
+          color={color}
           transparent
           opacity={0.7}
           depthWrite={false}
@@ -108,9 +109,24 @@ function DraggableDowel({ dowel, plane, controlsRef, onMove, onDelete }: DragPro
       <Html distanceFactor={20} center>
         <button
           className={`${dowel.source === "manual" ? "bg-[var(--accent)]" : "bg-[var(--primary)]"} text-white text-[10px] leading-none w-3.5 h-3.5 rounded-full shadow flex items-center justify-center`}
+          title={`${dowel.shape ?? "cylinder"} ${dowel.polarity ?? "separate-peg"}`}
           onClick={(e) => { e.stopPropagation(); onDelete?.(dowel.id); }}
         >×</button>
       </Html>
     </group>
   );
+}
+
+function markerColor(dowel: Dowel): string {
+  if (dowel.polarity === "magnet") return "#2b6cff";
+  if (dowel.polarity === "female") return "#6f6a5f";
+  switch (dowel.shape ?? "cylinder") {
+    case "cube": return "#10b981";
+    case "cross": return "#f59e0b";
+    case "dovetail": return "#7c3aed";
+    case "puzzle": return "#ef4444";
+    case "cylinder":
+    default:
+      return dowel.source === "manual" ? "#2b6cff" : "#ea5816";
+  }
 }

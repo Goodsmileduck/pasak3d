@@ -9,6 +9,7 @@ import { CutPanel } from "./components/CutPanel";
 import { PartsTree } from "./components/PartsTree";
 import { PrinterPanel } from "./components/PrinterPanel";
 import { ExplodedView } from "./components/ExplodedView";
+import { HeatmapControls } from "./components/HeatmapControls";
 import { ExportDialog, type ExportOptions } from "./components/ExportDialog";
 import { HelpOverlay } from "./components/HelpOverlay";
 import { UpdateNotification } from "./components/UpdateNotification";
@@ -18,6 +19,9 @@ import { useTheme } from "./hooks/useTheme";
 import { loadModel } from "./lib/loaders";
 import { useCutSession } from "./hooks/useCutSession";
 import { autoPlaceCutDowels } from "./lib/cut/auto-place-cut-dowels";
+import { runConnectorTestFit } from "./lib/cut/cut-client";
+import { TESTFIT_DEFAULTS } from "./lib/cut/test-fit";
+import { DEFAULT_CONNECTOR_ID, getConnector } from "./lib/cut/connectors/registry";
 import { buildZipExport } from "./lib/exporters/zip-export";
 import { exportToMulti3MF } from "./lib/exporters/3mf";
 import { saveBytes } from "./lib/exporters/save";
@@ -25,7 +29,16 @@ import { suggestCuts } from "./lib/cut/fit-to-printer";
 import { applyAutoOrient } from "./lib/cut/auto-orient";
 import { fitsInPrinter, dimensionsFromBBox } from "./lib/printer-presets";
 import { isDesktop, basename } from "./lib/platform";
-import type { ModelData, CutPlaneSpec, Dowel, TolerancePreset, PartId } from "./types";
+import type {
+  ModelData,
+  CutPlaneSpec,
+  Dowel,
+  TolerancePreset,
+  PartId,
+  JointShape,
+  JointPolarity,
+} from "./types";
+import { JOINT_SHAPES } from "./types";
 
 /** Read a file from disk via Tauri and feed it to the standard load pipeline. */
 async function loadFileFromPath(path: string, onFile: (f: File) => Promise<void>): Promise<void> {
@@ -47,10 +60,21 @@ export default function App() {
   const [previewPlane, setPreviewPlane] = useState<CutPlaneSpec | null>(null);
   const [previewDowels, setPreviewDowels] = useState<Dowel[]>([]);
   const [suggestedCuts, setSuggestedCuts] = useState<{ partId: PartId; cuts: CutPlaneSpec[] } | null>(null);
+  const suggestedBbox = useMemo(() => {
+    if (!suggestedCuts) return null;
+    const p = session.session.parts.get(suggestedCuts.partId);
+    if (!p) return null;
+    return new THREE.Box3().setFromObject(p.group);
+  }, [suggestedCuts, session.session.parts]);
   const [explodeFactor, setExplodeFactor] = useState(0);
+  const [overhangOn, setOverhangOn] = useState(false);
+  const [overhangThreshold, setOverhangThreshold] = useState(45);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [cutAxis, setCutAxis] = useState<"x" | "y" | "z">("x");
+  const [connectorId, setConnectorId] = useState(DEFAULT_CONNECTOR_ID);
+  const [jointShape, setJointShape] = useState<JointShape>("cylinder");
+  const [jointPolarity, setJointPolarity] = useState<JointPolarity>("separate-peg");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const update = useAutoUpdate();
   const { isDark, toggleTheme } = useTheme();
@@ -153,16 +177,23 @@ export default function App() {
     if (!activePart) return;
     setPreviewPlane(plane);
     const length = safeDowelLength(plane, dowelsHint[0]?.length ?? 20);
+    const shape = dowelsHint[0]?.shape ?? jointShape;
+    const selectedConnectorId = dowelsHint[0]?.connectorId ?? connectorId;
+    const polarity = dowelsHint[0]?.polarity ?? jointPolarity;
     const placed = autoPlaceCutDowels(activePart.mesh, plane, {
       count: dowelsHint.length,
       dowelDiameter: dowelsHint[0]?.diameter ?? 5,
       length,
       minSpacing: 2,
-    });
-    // Replace auto dowels but preserve user-added manual ones.
+    }).map((d) => ({ ...d, shape, connectorId: selectedConnectorId, polarity }));
+    // Replace auto dowels but preserve user-added manual ones — re-stamping their
+    // connector to the current selection so the cut never sees a mixed-connector set
+    // (applyConnectors rejects those).
     setPreviewDowels((prev) => [
       ...placed,
-      ...prev.filter((d) => d.source === "manual"),
+      ...prev
+        .filter((d) => d.source === "manual")
+        .map((d) => ({ ...d, shape, connectorId: selectedConnectorId, polarity })),
     ]);
   };
 
@@ -180,8 +211,18 @@ export default function App() {
         diameter: sample?.diameter ?? 5,
         length,
         source: "manual",
+        shape: sample?.shape ?? jointShape,
+        connectorId: sample?.connectorId ?? connectorId,
+        polarity: sample?.polarity ?? jointPolarity,
       },
     ]);
+  };
+
+  const onConnectorChange = (id: string) => {
+    setConnectorId(id);
+    if (JOINT_SHAPES.includes(id as JointShape)) {
+      setJointShape(id as JointShape);
+    }
   };
 
   const onDeleteDowel = (id: string) => {
@@ -209,6 +250,35 @@ export default function App() {
     if (!hasAny) return;
     setShowExportDialog(true);
   };
+
+  // Connector-aware test-fit sweep, seeded from the selected connector's default
+  // clearance. Both the toolbar and the cut-panel buttons use this so they never
+  // diverge (the old shape-based toolbar sweep ignored the selected connector).
+  const onTestFit = useCallback(async () => {
+    try {
+      setError(null);
+      const items = await runConnectorTestFit(connectorId, {
+        ...TESTFIT_DEFAULTS,
+        baseClearance: getConnector(connectorId)?.defaults.clearance ?? TESTFIT_DEFAULTS.baseClearance,
+      });
+      const bytes = buildZipExport(items, []);
+      await saveBytes("pasak-testfit.zip", "application/zip", bytes);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [connectorId]);
+
+  const onLabelPart = useCallback((partId: PartId) => {
+    const part = session.session.parts.get(partId);
+    if (!part || part.isDowel) return;
+    const shortId = part.id.replace(/^p_/, "").replace(/[^a-z0-9]/gi, "").slice(0, 4).toUpperCase() || "A";
+    const raw = window.prompt("Label text", shortId);
+    const text = raw?.trim();
+    if (!text) return;
+    void session.performLabel(partId, text, "emboss");
+    setPreviewPlane(null);
+    setPreviewDowels([]);
+  }, [session]);
 
   const performExport = async (opts: ExportOptions) => {
     const exportableParts = session.partsArray.filter((p) => p.meta.source === "cut");
@@ -313,6 +383,8 @@ export default function App() {
       "Ctrl+Shift+z": session.redo,
       "Ctrl+e": () => hasCutParts && setShowExportDialog(true),
       "Ctrl+E": () => hasCutParts && setShowExportDialog(true),
+      "V": () => setOverhangOn((v) => !v),
+      "v": () => setOverhangOn((v) => !v),
       "?": () => setShowHelp((s) => !s),
     },
     [session.undo, session.redo, hasCutParts, activePart, handleOpen],
@@ -334,17 +406,23 @@ export default function App() {
       <Toolbar
         onOpen={handleOpen}
         onExport={onExport}
+        onTestFit={onTestFit}
         canExport={hasCutParts}
         onUndo={session.undo}
         onRedo={session.redo}
         canUndo={session.canUndo}
         canRedo={session.canRedo}
+        overhangOn={overhangOn}
+        onToggleOverhang={() => setOverhangOn((v) => !v)}
         isDark={isDark}
         onToggleTheme={toggleTheme}
         printerSlot={
           <>
             {hasCutParts && (
               <ExplodedView value={explodeFactor} onChange={setExplodeFactor} />
+            )}
+            {overhangOn && (
+              <HeatmapControls threshold={overhangThreshold} onThresholdChange={setOverhangThreshold} />
             )}
             <PrinterPanel
               selected={session.session.printer}
@@ -365,6 +443,8 @@ export default function App() {
               setPreviewDowels([]);
             }}
             onToggleVisible={session.togglePartVisible}
+            onSeparate={session.performSeparate}
+            onLabel={onLabelPart}
           />
         )}
         {showCutPanel && bbox && (
@@ -381,6 +461,13 @@ export default function App() {
               setPreviewDowels([]);
             }}
             busy={session.busy}
+            connectorId={connectorId}
+            onConnectorChange={onConnectorChange}
+            onConnectorTestFit={onTestFit}
+            jointShape={jointShape}
+            onJointShapeChange={setJointShape}
+            jointPolarity={jointPolarity}
+            onJointPolarityChange={setJointPolarity}
           />
         )}
         <div className="flex-1 relative">
@@ -430,11 +517,14 @@ export default function App() {
               rootGroup={hasCutParts ? null : (importRoot?.group ?? null)}
               cutParts={cutPartsForViewer}
               cutPreview={previewPlane && bbox ? { plane: previewPlane, bbox } : null}
+              suggestedCuts={suggestedCuts && suggestedBbox ? { cuts: suggestedCuts.cuts, bbox: suggestedBbox } : null}
               dowels={previewDowels}
               onPlaneClick={onPlaneClick}
               onDeleteDowel={onDeleteDowel}
               onMoveDowel={onMoveDowel}
               explodeFactor={explodeFactor}
+              overhangOn={overhangOn}
+              overhangThreshold={overhangThreshold}
               isDark={isDark}
             />
           )}

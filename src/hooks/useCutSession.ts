@@ -1,13 +1,15 @@
 import { useCallback, useState } from "react";
 import * as THREE from "three";
 import type { Dowel, CutPlaneSpec, TolerancePreset, ModelData, PartId, PrinterPreset } from "../types";
-import { runCut } from "../lib/cut/cut-client";
+import { runCut, runLabel, runSeparate } from "../lib/cut/cut-client";
 import { autoPlaceCutDowels } from "../lib/cut/auto-place-cut-dowels";
 import { centerOnXY } from "../lib/scene";
 import {
   emptySession,
   importPart,
   applyCutResult,
+  applySeparateResult,
+  applyLabelResult,
   setVisible,
   selectPart,
   setPrinter as setPrinterReducer,
@@ -86,6 +88,69 @@ export function useCutSession() {
           { partA: a, partB: b, dowelPieces: dps },
           target.meta.name,
         );
+        syncSessionColors(next);
+        push(next);
+      } catch (e: any) {
+        setError(e?.message ?? String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [session, push],
+  );
+
+  const performSeparate = useCallback(
+    async (partId: PartId) => {
+      const target = session.parts.get(partId);
+      if (!target) return;
+      setBusy(true);
+      setError(null);
+      try {
+        const groups = await runSeparate(target.mesh);
+        if (groups.length <= 1) throw new Error("This part is already a single body.");
+        // deserialize always wraps exactly one mesh, so this map never drops a component.
+        const components = groups
+          .map(firstMeshAndGroup)
+          .filter((x): x is { mesh: THREE.Mesh; group: THREE.Group } => !!x);
+        const next = applySeparateResult(session, partId, components, target.meta.name);
+        syncSessionColors(next);
+        push(next);
+      } catch (e: any) {
+        setError(e?.message ?? String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [session, push],
+  );
+
+  const performLabel = useCallback(
+    async (partId: PartId, text: string, mode: "emboss" | "deboss") => {
+      const target = session.parts.get(partId);
+      if (!target) return;
+      setBusy(true);
+      setError(null);
+      try {
+        const bbox = new THREE.Box3().setFromObject(target.group);
+        const position: [number, number, number] = [
+          (bbox.min.x + bbox.max.x) / 2,
+          (bbox.min.y + bbox.max.y) / 2,
+          bbox.max.z,
+        ];
+        const group = await runLabel(target.mesh, {
+          text,
+          mode,
+          size: 8,
+          depth: 1,
+          position,
+          axis: [0, 0, 1],
+        });
+        const labeled = firstMeshAndGroup(group);
+        if (!labeled) throw new Error("Label produced an empty part");
+        // The deserialized mesh carries a default gray material; keep the part's
+        // existing look (imported material or cut-part palette color) after labeling.
+        labeled.mesh.material = target.mesh.material;
+        const next = applyLabelResult(session, partId, labeled);
         syncSessionColors(next);
         push(next);
       } catch (e: any) {
@@ -190,6 +255,8 @@ export function useCutSession() {
     error,
     loadModel,
     performCut,
+    performSeparate,
+    performLabel,
     performCutsSequential,
     undo,
     redo,

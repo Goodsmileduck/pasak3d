@@ -3,12 +3,15 @@ import type { ReactNode } from "react";
 type Props = {
   onOpen: () => void;
   onExport: () => void;
+  onTestFit: () => void;
   canExport: boolean;
   onUndo?: () => void;
   onRedo?: () => void;
   canUndo?: boolean;
   canRedo?: boolean;
   printerSlot?: ReactNode;
+  overhangOn?: boolean;
+  onToggleOverhang?: () => void;
   isDark?: boolean;
   onToggleTheme?: () => void;
 };
@@ -16,12 +19,15 @@ type Props = {
 export function Toolbar({
   onOpen,
   onExport,
+  onTestFit,
   canExport,
   onUndo,
   onRedo,
   canUndo,
   canRedo,
   printerSlot,
+  overhangOn,
+  onToggleOverhang,
   isDark,
   onToggleTheme,
 }: Props) {
@@ -44,6 +50,24 @@ export function Toolbar({
       </button>
       <div className="flex-1" />
       {printerSlot}
+      {onToggleOverhang && (
+        <button
+          className={overhangOn
+            ? "px-3 py-1 rounded bg-[var(--ink)] text-[var(--surface)] hover:opacity-90 transition-opacity"
+            : "btn-neutral px-3 py-1"}
+          onClick={onToggleOverhang}
+          aria-pressed={overhangOn}
+        >
+          Overhang
+        </button>
+      )}
+      <button
+        className="btn-neutral px-3 py-1"
+        onClick={onTestFit}
+        aria-label="Generate test-fit coupons"
+      >
+        Test-fit
+      </button>
       {onToggleTheme && (
         <button
           className="w-8 h-7 grid place-items-center rounded bg-[var(--surface-2)] text-[var(--ink-muted)] hover:bg-[var(--surface-3)] hover:text-[var(--ink)] transition-colors"

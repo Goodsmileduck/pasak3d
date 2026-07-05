@@ -1,0 +1,64 @@
+import { describe, it, expect, beforeAll } from "vitest";
+import { initManifold } from "../../src/lib/cut/manifold";
+import { generateConnectorTestFit, generateTestFitPairs } from "../../src/lib/cut/test-fit";
+import { getConnector } from "../../src/lib/cut/connectors/registry";
+
+let M: any;
+beforeAll(async () => { M = await initManifold(); });
+
+const base = { count: 1, step: 0.05, baseClearance: 0.1, cubeSize: 12, keyDepth: 5, keyWidth: 6, shape: "cylinder" as const };
+const copts = { count: 3, step: 0.05, baseClearance: 0.15, cubeSize: 14, keyDepth: 6, keyWidth: 8, shape: "cylinder" as const };
+
+describe("generateTestFitPairs", () => {
+  it("emits one male+female coupon for count=1", () => {
+    const pairs = generateTestFitPairs(M, base);
+    expect(pairs.length).toBe(1);
+    const p = pairs[0];
+    expect(p.male.status()).toBe("NoError");
+    expect(p.female.status()).toBe("NoError");
+    // male block + protruding key => more than a bare block; female block - socket => less.
+    const block = M.Manifold.cube([12, 12, 12], true);
+    expect(p.male.volume()).toBeGreaterThan(block.volume());
+    expect(p.female.volume()).toBeLessThan(block.volume());
+    block.delete();
+    p.male.delete(); p.female.delete();
+  });
+
+  it("names encode index, shape, clearance and A/B (index prevents label collisions)", () => {
+    const p = generateTestFitPairs(M, base)[0];
+    expect(p.maleName).toBe("testfit_00_cylinder_c0.10_A.stl");
+    expect(p.femaleName).toBe("testfit_00_cylinder_c0.10_B.stl");
+    p.male.delete(); p.female.delete();
+  });
+
+  it("sweeps clearance monotonically and the socket grows with clearance", () => {
+    const pairs = generateTestFitPairs(M, { ...base, count: 3, step: 0.1, baseClearance: 0.1 });
+    expect(pairs.map((p) => p.clearance)).toEqual([0.1, 0.2, 0.3].map((v) => expect.closeTo(v, 5)));
+    // Bigger clearance => bigger socket => less material in the female block.
+    expect(pairs[2].female.volume()).toBeLessThan(pairs[0].female.volume());
+    pairs.forEach((p) => { p.male.delete(); p.female.delete(); });
+  });
+
+  it("shuffleShapes cycles through the shape catalog per pair", () => {
+    const pairs = generateTestFitPairs(M, { ...base, count: 3, shuffleShapes: true });
+    const shapes = new Set(pairs.map((p) => p.shape));
+    expect(shapes.size).toBeGreaterThan(1);
+    pairs.forEach((p) => { p.male.delete(); p.female.delete(); });
+  });
+
+  it("generateConnectorTestFit emits a coupon sweep for a snap connector", () => {
+    const pins = generateConnectorTestFit(M, getConnector("snap-pin")!, copts);
+    expect(pins.length).toBe(3);
+    expect(pins.map((p) => p.clearance)).toEqual([0.15, 0.2, 0.25].map((v) => expect.closeTo(v, 5)));
+    // Bigger clearance => bigger socket => less material in the female coupon.
+    expect(pins[2].female.volume()).toBeLessThan(pins[0].female.volume());
+    expect(pins[0].maleName).toContain("snap-pin");
+    pins.forEach((p) => { p.male.delete(); p.female.delete(); });
+  });
+
+  it("works for an integral connector (male coupon fuses the integral clip)", () => {
+    const clip = generateConnectorTestFit(M, getConnector("cantilever-clip")!, copts);
+    expect(clip.length).toBe(3);
+    clip.forEach((p) => { expect(p.male.status()).toBe("NoError"); p.male.delete(); p.female.delete(); });
+  });
+});

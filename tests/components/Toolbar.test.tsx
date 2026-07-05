@@ -5,33 +5,40 @@ import { Toolbar } from "../../src/components/Toolbar";
 
 describe("Toolbar", () => {
   it("renders Open and Export buttons", () => {
-    render(<Toolbar onOpen={vi.fn()} onExport={vi.fn()} canExport={false} />);
+    render(<Toolbar onOpen={vi.fn()} onExport={vi.fn()} onTestFit={vi.fn()} canExport={false} />);
     expect(screen.getByRole("button", { name: /open/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^export$/i })).toBeInTheDocument();
   });
 
   it("calls onOpen when Open is clicked", async () => {
     const onOpen = vi.fn();
-    render(<Toolbar onOpen={onOpen} onExport={vi.fn()} canExport={false} />);
+    render(<Toolbar onOpen={onOpen} onExport={vi.fn()} onTestFit={vi.fn()} canExport={false} />);
     await userEvent.setup().click(screen.getByRole("button", { name: /open/i }));
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
   it("disables the Export button when canExport is false", () => {
-    render(<Toolbar onOpen={vi.fn()} onExport={vi.fn()} canExport={false} />);
+    render(<Toolbar onOpen={vi.fn()} onExport={vi.fn()} onTestFit={vi.fn()} canExport={false} />);
     expect(screen.getByRole("button", { name: /^export$/i })).toBeDisabled();
   });
 
   it("enables the Export button when canExport is true", () => {
-    render(<Toolbar onOpen={vi.fn()} onExport={vi.fn()} canExport={true} />);
+    render(<Toolbar onOpen={vi.fn()} onExport={vi.fn()} onTestFit={vi.fn()} canExport={true} />);
     expect(screen.getByRole("button", { name: /^export$/i })).toBeEnabled();
   });
 
   it("calls onExport when Export is clicked", async () => {
     const onExport = vi.fn();
-    render(<Toolbar onOpen={vi.fn()} onExport={onExport} canExport={true} />);
+    render(<Toolbar onOpen={vi.fn()} onExport={onExport} onTestFit={vi.fn()} canExport={true} />);
     await userEvent.setup().click(screen.getByRole("button", { name: /^export$/i }));
     expect(onExport).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls onTestFit when the test-fit action is clicked", async () => {
+    const onTestFit = vi.fn();
+    render(<Toolbar onOpen={vi.fn()} onExport={vi.fn()} canExport={false} onTestFit={onTestFit} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: /test-fit/i }));
+    expect(onTestFit).toHaveBeenCalled();
   });
 
   it("disables Undo/Redo when canUndo/canRedo are false", () => {
@@ -39,6 +46,7 @@ describe("Toolbar", () => {
       <Toolbar
         onOpen={vi.fn()}
         onExport={vi.fn()}
+        onTestFit={vi.fn()}
         canExport={false}
         onUndo={vi.fn()}
         onRedo={vi.fn()}
@@ -56,6 +64,7 @@ describe("Toolbar", () => {
       <Toolbar
         onOpen={vi.fn()}
         onExport={vi.fn()}
+        onTestFit={vi.fn()}
         canExport={false}
         onUndo={onUndo}
         canUndo={true}
@@ -72,10 +81,18 @@ describe("Toolbar", () => {
       <Toolbar
         onOpen={vi.fn()}
         onExport={vi.fn()}
+        onTestFit={vi.fn()}
         canExport={false}
         printerSlot={<span data-testid="my-slot">Slotted</span>}
       />,
     );
     expect(screen.getByTestId("my-slot")).toBeInTheDocument();
+  });
+
+  it("calls onToggleOverhang when the Overhang button is clicked", async () => {
+    const onToggle = vi.fn();
+    render(<Toolbar onOpen={vi.fn()} onExport={vi.fn()} onTestFit={vi.fn()} canExport={false} onToggleOverhang={onToggle} />);
+    await userEvent.click(screen.getByRole("button", { name: /overhang/i }));
+    expect(onToggle).toHaveBeenCalled();
   });
 });

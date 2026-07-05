@@ -76,6 +76,54 @@ describe("PartsTree", () => {
     expect(onToggleVisible).toHaveBeenCalledWith("p_root", false);
   });
 
+  it("calls onSeparate when the separate action is clicked", async () => {
+    const user = userEvent.setup();
+    const onSeparate = vi.fn();
+    const parts = [makePart({ id: "p_root", name: "Body" })];
+    render(
+      <PartsTree
+        parts={parts}
+        selectedId={null}
+        onSelect={vi.fn()}
+        onToggleVisible={vi.fn()}
+        onSeparate={onSeparate}
+      />,
+    );
+    await user.click(screen.getAllByRole("button", { name: /separate/i })[0]);
+    expect(onSeparate).toHaveBeenCalledWith("p_root");
+  });
+
+  it("calls onLabel when the label action is clicked", async () => {
+    const user = userEvent.setup();
+    const onLabel = vi.fn();
+    const parts = [makePart({ id: "p_root", name: "Body" })];
+    render(
+      <PartsTree
+        parts={parts}
+        selectedId={null}
+        onSelect={vi.fn()}
+        onToggleVisible={vi.fn()}
+        onLabel={onLabel}
+      />,
+    );
+    await user.click(screen.getAllByRole("button", { name: /label/i })[0]);
+    expect(onLabel).toHaveBeenCalledWith("p_root");
+  });
+
+  it("does not show the label action for dowels", () => {
+    const parts = [makePart({ id: "d0", name: "Dowel c1-1", isDowel: true })];
+    render(
+      <PartsTree
+        parts={parts}
+        selectedId={null}
+        onSelect={vi.fn()}
+        onToggleVisible={vi.fn()}
+        onLabel={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /label/i })).not.toBeInTheDocument();
+  });
+
   it("does not propagate the visibility-checkbox click as a row select", async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();

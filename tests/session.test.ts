@@ -4,6 +4,8 @@ import {
   emptySession,
   importPart,
   applyCutResult,
+  applySeparateResult,
+  applyLabelResult,
   setVisible,
   selectPart,
   setPrinter,
@@ -45,6 +47,33 @@ describe("session reducer", () => {
     expect(s.parts.get(r.partId)?.meta.visible).toBe(false);
     expect(s.parts.size).toBe(4); // root + A + B + dowel
     expect(s.selectedPartId).toBe(`${r.partId}_a`);
+  });
+
+  it("applySeparateResult hides parent and adds one child per component", () => {
+    let s = emptySession();
+    const root = makeMesh();
+    const r = importPart(s, root.mesh, root.group, "Body");
+    s = r.session;
+    const s1 = applySeparateResult(s, r.partId, [makeMesh(), makeMesh()], "Body");
+    expect(s1.parts.get(r.partId)!.meta.visible).toBe(false);
+    const kids = [...s1.parts.values()].filter((p) => p.meta.parentId === r.partId);
+    expect(kids.length).toBe(2);
+    expect(kids.map((k) => k.meta.name)).toEqual(["Body-1", "Body-2"]);
+  });
+
+  it("applyLabelResult swaps a part's geometry in place, keeping its identity", () => {
+    let s = emptySession();
+    const root = makeMesh();
+    const r = importPart(s, root.mesh, root.group, "Body");
+    s = r.session;
+    const before = s.parts.get(r.partId)!;
+    const out = { mesh: new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2)), group: new THREE.Group() };
+    const s1 = applyLabelResult(s, r.partId, out);
+    const after = s1.parts.get(r.partId)!;
+    expect(after.meta.name).toBe(before.meta.name);
+    expect(after.mesh).toBe(out.mesh);
+    expect(after.group).toBe(out.group);
+    expect(after.id).toBe(before.id);
   });
 
   it("setVisible toggles", () => {

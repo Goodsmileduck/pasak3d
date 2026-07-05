@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls as DreiOrbitControls } from "@react-three/drei";
 import * as THREE from "three";
@@ -6,8 +6,11 @@ import type { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { BuildPlate } from "./BuildPlate";
 import { AxisCube } from "./AxisCube";
 import { CutPlane } from "./CutPlane";
+import { SuggestedCutPlanes } from "./SuggestedCutPlanes";
 import { DowelMarkers } from "./DowelMarkers";
 import { centerOnXY } from "../lib/scene";
+import { makeHeatmapMaterial } from "../lib/heatmap-material";
+import { applyHeatmap, clearHeatmap } from "../lib/heatmap-apply";
 import type { CutPlaneSpec, Dowel } from "../types";
 import type { PlateMode } from "./plateModes";
 
@@ -27,6 +30,7 @@ interface ViewerProps {
   cutParts?: CutPartEntry[];
   /** M2 mode: cut plane preview */
   cutPreview?: { plane: CutPlaneSpec; bbox: THREE.Box3 } | null;
+  suggestedCuts?: { cuts: CutPlaneSpec[]; bbox: THREE.Box3 } | null;
   /** M2 mode: dowel markers */
   dowels?: Dowel[];
   /** Click on the cut plane (world-space point). Used to add manual dowels. */
@@ -37,6 +41,8 @@ interface ViewerProps {
   onMoveDowel?: (id: string, point: [number, number, number]) => void;
   /** M3: exploded-view factor 0..1 — moves each part radially outward. */
   explodeFactor?: number;
+  overhangOn?: boolean;
+  overhangThreshold?: number;
   isDark?: boolean;
   wireframe?: boolean;
   plateMode?: PlateMode;
@@ -49,11 +55,14 @@ interface SceneContentsProps {
   rootGroup: THREE.Group | null;
   cutParts?: CutPartEntry[];
   cutPreview?: { plane: CutPlaneSpec; bbox: THREE.Box3 } | null;
+  suggestedCuts?: { cuts: CutPlaneSpec[]; bbox: THREE.Box3 } | null;
   dowels?: Dowel[];
   onPlaneClick?: (point: THREE.Vector3) => void;
   onDeleteDowel?: (id: string) => void;
   onMoveDowel?: (id: string, point: [number, number, number]) => void;
   explodeFactor: number;
+  overhangOn?: boolean;
+  overhangThreshold?: number;
   isDark: boolean;
   wireframe: boolean;
   plateMode: PlateMode;
@@ -65,11 +74,14 @@ function SceneContents({
   rootGroup,
   cutParts,
   cutPreview,
+  suggestedCuts,
   dowels,
   onPlaneClick,
   onDeleteDowel,
   onMoveDowel,
   explodeFactor,
+  overhangOn,
+  overhangThreshold,
   isDark,
   wireframe,
   plateMode,
@@ -88,6 +100,19 @@ function SceneContents({
 
   // Determine which groups to render in scene
   const hasCutParts = cutParts && cutParts.length > 0;
+  const heatMat = useMemo(() => makeHeatmapMaterial(overhangThreshold ?? 45), []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    (heatMat.userData.setThreshold as (d: number) => void)(overhangThreshold ?? 45);
+  }, [overhangThreshold, heatMat]);
+
+  useEffect(() => {
+    const groups = (cutParts ?? []).filter((p) => p.visible && !p.isDowel).map((p) => p.group);
+    const all = rootGroup && !hasCutParts ? [rootGroup] : groups;
+    if (overhangOn) all.forEach((g) => applyHeatmap(g, heatMat));
+    else all.forEach((g) => clearHeatmap(g));
+    return () => all.forEach((g) => clearHeatmap(g));
+  }, [overhangOn, cutParts, rootGroup, hasCutParts, heatMat]);
 
   // Single-model mode: add rootGroup to scene
   useEffect(() => {
@@ -267,6 +292,10 @@ function SceneContents({
         <CutPlane plane={cutPreview.plane} bbox={cutPreview.bbox} onClick={onPlaneClick} />
       )}
 
+      {suggestedCuts && suggestedCuts.cuts.length > 0 && (
+        <SuggestedCutPlanes cuts={suggestedCuts.cuts} bbox={suggestedCuts.bbox} />
+      )}
+
       {/* Dowel markers */}
       {dowels && dowels.length > 0 && (
         <DowelMarkers
@@ -303,11 +332,14 @@ export function Viewer({
   rootGroup = null,
   cutParts,
   cutPreview,
+  suggestedCuts = null,
   dowels,
   onPlaneClick,
   onDeleteDowel,
   onMoveDowel,
   explodeFactor = 0,
+  overhangOn = false,
+  overhangThreshold = 45,
   isDark = false,
   wireframe = false,
   plateMode = "grid",
@@ -349,11 +381,14 @@ export function Viewer({
           rootGroup={rootGroup}
           cutParts={cutParts}
           cutPreview={cutPreview}
+          suggestedCuts={suggestedCuts}
           dowels={dowels}
           onPlaneClick={onPlaneClick}
           onDeleteDowel={onDeleteDowel}
           onMoveDowel={onMoveDowel}
           explodeFactor={explodeFactor}
+          overhangOn={overhangOn}
+          overhangThreshold={overhangThreshold}
           isDark={isDark}
           wireframe={wireframe}
           plateMode={plateMode}
