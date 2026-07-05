@@ -541,23 +541,449 @@ git commit -m "docs(p6-m2): regions smoke checklist + deferred dominant-split sc
 
 - [ ] **STOP — pause for user review before C-M3.**
 
-# C-M3 — Seam planes + worker + UI (outline)
+# C-M3 — Seam planes + worker + UI
 
-Expand after C-M2 review. Locked interfaces:
+The integration milestone: fit a **cut plane per region boundary** (`seamPlanes`), compose the full
+`segmentCuts` pipeline, expose it through a `segment` worker case + `runSegment` client, and wire an **Auto-Split**
+button into the **existing** suggested-cut modal (`setSuggestedCuts` → the "Will add N cuts" panel →
+`performCutsSequential`). Nothing in the cut/connector/apply engine changes.
 
-- **Create `src/lib/cut/segment/seam-planes.ts`**: `seamPlanes(geometry, labels): CutPlaneSpec[]` — for each pair
-  of adjacent regions, collect the shared boundary-edge vertices, fit a **best plane** (PCA / least-squares) →
-  `{ normal, constant, axisSnap: "free" }`; dedupe near-coincident planes; drop planes that don't separate the mesh.
-  Plus `segmentCuts(geometry, opts) = seamPlanes(geometry, segmentFaces(geometry, computeSDF(geometry), opts))`.
-- **Worker/client:** add a `segment` case to `CutWorkerRequest`/`CutWorkerResponse` (`{ op:"segment", meshGeometry,
-  opts } → { ok, planes: CutPlaneSpec[] }`) and `runSegment(mesh, opts): Promise<CutPlaneSpec[]>` in `cut-client.ts`
-  (mirror `runSeparate`).
-- **UI:** an "Auto-Split" Toolbar button + a Max-parts/Detail control; `onAutoSplit` runs `runSegment(activePart, opts)`
-  and `setSuggestedCuts({ partId, cuts })` — the existing preview + "Will add N cuts" + `performCutsSequential` do the rest.
-- **Verify** `axisSnap:"free"` planes cut cleanly through `planeCutMesh` + dowel placement (the spec's open risk).
-- **Tests:** `seamPlanes` (two stacked boxes → one ~horizontal plane; empty for a single convex blob); worker `segment`
-  roundtrip; Toolbar button fires its handler. Tasks: (1) `seamPlanes` + `segmentCuts` + tests; (2) worker case + `runSegment` + test;
-  (3) Auto-Split button + App wiring + free-plane cut verification; (4) verify + `docs/p6-m3-*-smoke-test.md`; STOP.
+## Verified integration points (read before starting)
+
+- **`CutPlaneSpec = { normal: [number,number,number]; constant: number; axisSnap: "x"|"y"|"z"|"free" }`**
+  (`src/types/index.ts:94`). Auto-split emits `axisSnap: "free"`; `constant = normal · pointOnPlane`.
+- **Worker** (`src/workers/cut-worker.ts`): `CutWorkerRequest`/`CutWorkerResponse` unions + `self.onmessage`.
+  Line 88 builds `const mesh = meshFromSerializedGeometry(e.data.meshGeometry)` for every non-`testfit` op; the
+  `separate` branch (lines 90–99) is the template. Manifold (`getWorkerManifold`) is already awaited at the top —
+  `segment` doesn't need it but the await is harmless.
+- **Client** (`src/lib/cut/cut-client.ts`): `runSeparate(mesh)` (lines 82–93) is the exact template —
+  `serializeMeshForWorker(mesh)` → `submit(req, transfer, pick)`. `submit`'s `pick` receives the `ok:true` response.
+- **App** (`src/App.tsx`): `suggestedCuts` state (line 62: `{ partId: PartId; cuts: CutPlaneSpec[] } | null`),
+  `onSuggestCuts` (lines 328–342) sets it, and the modal (lines 587–604) renders "Will add N cuts" + Apply →
+  `session.performCutsSequential(partId, cuts, { count: 4, diameter: 5, length: 20, tolerance: "pla-tight" })`.
+  Auto-split calls the identical `setSuggestedCuts(...)` — do NOT build a new modal/apply path.
+
+## File structure (C-M3)
+
+- Create `src/lib/cut/segment/seam-planes.ts` — `seamPlanes` + `segmentCuts` (+ internal `triIndices`, `posKey`, PCA).
+- Test `tests/cut/segment/seam-planes.test.ts`.
+- Modify `src/workers/cut-worker.ts` — add the `segment` request/response variants + dispatch branch.
+- Modify `src/lib/cut/cut-client.ts` — add `runSegment`.
+- Test `tests/cut/segment/free-plane-cut.test.ts` — the spec's open risk (a `"free"` plane cuts cleanly).
+- Modify `src/components/StatusBar.tsx` + `src/App.tsx` — Auto-Split button + `onAutoSplit` + Max-parts/Detail knobs.
+
+---
+
+### Task 1: `seamPlanes` + `segmentCuts`
+
+**Files:**
+- Create: `src/lib/cut/segment/seam-planes.ts`
+- Test: `tests/cut/segment/seam-planes.test.ts`
+
+**Interfaces:**
+- Consumes: `segmentFaces` + `computeSDF` (this package), `CutPlaneSpec` (`../../../types`), `SegmentOptions`.
+- Produces:
+  - `seamPlanes(geometry: THREE.BufferGeometry, labels: Int32Array): CutPlaneSpec[]` — one best-fit plane per
+    adjacent region pair (`axisSnap: "free"`), near-coincident planes deduped, non-separating planes dropped.
+  - `segmentCuts(geometry: THREE.BufferGeometry, opts: SegmentOptions): CutPlaneSpec[]` =
+    `seamPlanes(geometry, segmentFaces(geometry, computeSDF(geometry), opts))`.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/cut/segment/seam-planes.test.ts
+import { describe, it, expect } from "vitest";
+import * as THREE from "three";
+import { seamPlanes, segmentCuts } from "../../../src/lib/cut/segment/seam-planes";
+
+/** Per-face labels from face-centroid Z against ascending thresholds (0,1,2,... by band). */
+function labelByZ(geom: THREE.BufferGeometry, thresholds: number[]): Int32Array {
+  const pos = geom.attributes.position as THREE.BufferAttribute;
+  const idx = geom.index!;
+  const faceCount = idx.count / 3;
+  const labels = new Int32Array(faceCount);
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  for (let f = 0; f < faceCount; f++) {
+    a.fromBufferAttribute(pos, idx.getX(f * 3));
+    b.fromBufferAttribute(pos, idx.getX(f * 3 + 1));
+    c.fromBufferAttribute(pos, idx.getX(f * 3 + 2));
+    const cz = (a.z + b.z + c.z) / 3;
+    let band = 0;
+    for (const t of thresholds) if (cz > t) band++;
+    labels[f] = band;
+  }
+  return labels;
+}
+
+describe("seamPlanes", () => {
+  it("fits one horizontal plane to a box split at z=0", () => {
+    const geom = new THREE.BoxGeometry(2, 2, 2, 1, 1, 2); // faces above/below z=0 on the walls
+    const labels = labelByZ(geom, [0]);
+    const planes = seamPlanes(geom, labels);
+    expect(planes.length).toBe(1);
+    expect(Math.abs(planes[0].normal[2])).toBeGreaterThan(0.99); // normal ≈ ±Z
+    expect(Math.abs(planes[0].constant)).toBeLessThan(0.05);     // passes through z≈0
+    expect(planes[0].axisSnap).toBe("free");
+  });
+
+  it("returns no planes for a single-region (uniform label) mesh", () => {
+    const geom = new THREE.BoxGeometry(2, 2, 2, 1, 1, 2);
+    const labels = new Int32Array((geom.index!.count / 3)).fill(0);
+    expect(seamPlanes(geom, labels)).toEqual([]);
+  });
+
+  it("keeps two parallel seams distinct (no over-dedupe)", () => {
+    const geom = new THREE.BoxGeometry(2, 2, 3, 1, 1, 3); // walls split at z=-0.5 and z=+0.5
+    const labels = labelByZ(geom, [-0.5, 0.5]);
+    const planes = seamPlanes(geom, labels);
+    expect(planes.length).toBe(2);
+    for (const p of planes) expect(Math.abs(p.normal[2])).toBeGreaterThan(0.99);
+  });
+
+  it("fits an oblique plane (validates free-orientation PCA, not just axis-aligned)", () => {
+    const geom = new THREE.BoxGeometry(2, 2, 2, 1, 1, 2);
+    const labels = labelByZ(geom, [0]);          // label BEFORE rotating
+    const R = new THREE.Matrix4().makeRotationX(Math.PI / 6);
+    geom.applyMatrix4(R);                          // seam ring z=0 → rotated plane
+    const planes = seamPlanes(geom, labels);
+    expect(planes.length).toBe(1);
+    const expected = new THREE.Vector3(0, 0, 1).applyMatrix4(R).normalize(); // (0,-0.5,0.866)
+    const n = new THREE.Vector3(...planes[0].normal);
+    expect(Math.abs(n.dot(expected))).toBeGreaterThan(0.99); // aligned up to sign
+  });
+});
+
+describe("segmentCuts", () => {
+  it("composes SDF → regions → planes and returns a CutPlaneSpec[] without throwing", () => {
+    const geom = new THREE.BoxGeometry(4, 4, 4);
+    const planes = segmentCuts(geom, { maxParts: 8, detail: 0.45 });
+    expect(Array.isArray(planes)).toBe(true);
+    for (const p of planes) {
+      expect(p.axisSnap).toBe("free");
+      expect(p.normal).toHaveLength(3);
+    }
+  });
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL** (module not found)
+
+Run: `npx vitest run tests/cut/segment/seam-planes.test.ts`
+
+- [ ] **Step 3: Implement**
+
+```ts
+// src/lib/cut/segment/seam-planes.ts
+import * as THREE from "three";
+import type { CutPlaneSpec } from "../../../types";
+import { computeSDF } from "./sdf";
+import { segmentFaces, type SegmentOptions } from "./regions";
+
+const QUANT = 1e4;         // vertex weld precision (match regions.ts)
+const PARALLEL_DOT = 0.999; // |n1·n2| above this ⇒ same orientation (for dedupe)
+const COINCIDENT_C = 1e-2;  // constant closeness for dedupe (model units)
+
+function triIndices(geom: THREE.BufferGeometry, f: number): [number, number, number] {
+  if (geom.index) return [geom.index.getX(f * 3), geom.index.getX(f * 3 + 1), geom.index.getX(f * 3 + 2)];
+  return [f * 3, f * 3 + 1, f * 3 + 2];
+}
+function posKey(x: number, y: number, z: number): string {
+  return `${Math.round(x * QUANT)},${Math.round(y * QUANT)},${Math.round(z * QUANT)}`;
+}
+
+/** Largest-eigenvector power iteration on a symmetric 3×3 (row-major m[9]). Deterministic seed. */
+function powerIter(m: number[], sx: number, sy: number, sz: number): THREE.Vector3 {
+  const x = new THREE.Vector3(sx, sy, sz).normalize();
+  const t = new THREE.Vector3();
+  for (let k = 0; k < 48; k++) {
+    t.set(
+      m[0] * x.x + m[1] * x.y + m[2] * x.z,
+      m[3] * x.x + m[4] * x.y + m[5] * x.z,
+      m[6] * x.x + m[7] * x.y + m[8] * x.z,
+    );
+    const len = t.length();
+    if (len < 1e-12) break;
+    x.copy(t).multiplyScalar(1 / len);
+  }
+  return x.clone();
+}
+
+/** Best-fit plane normal (smallest principal axis) = cross of the two largest via power iteration + deflation. */
+function fitNormal(pts: THREE.Vector3[], centroid: THREE.Vector3): THREE.Vector3 | null {
+  if (pts.length < 3) return null;
+  let xx = 0, xy = 0, xz = 0, yy = 0, yz = 0, zz = 0;
+  const d = new THREE.Vector3();
+  for (const p of pts) {
+    d.subVectors(p, centroid);
+    xx += d.x * d.x; xy += d.x * d.y; xz += d.x * d.z; yy += d.y * d.y; yz += d.y * d.z; zz += d.z * d.z;
+  }
+  const M = [xx, xy, xz, xy, yy, yz, xz, yz, zz];
+  const u = powerIter(M, 1, 0.37, 0.57);
+  const lu =
+    u.x * (M[0] * u.x + M[1] * u.y + M[2] * u.z) +
+    u.y * (M[3] * u.x + M[4] * u.y + M[5] * u.z) +
+    u.z * (M[6] * u.x + M[7] * u.y + M[8] * u.z);
+  const Md = [
+    M[0] - lu * u.x * u.x, M[1] - lu * u.x * u.y, M[2] - lu * u.x * u.z,
+    M[3] - lu * u.y * u.x, M[4] - lu * u.y * u.y, M[5] - lu * u.y * u.z,
+    M[6] - lu * u.z * u.x, M[7] - lu * u.z * u.y, M[8] - lu * u.z * u.z,
+  ];
+  const v = powerIter(Md, 0.31, 1, 0.13);
+  const n = new THREE.Vector3().crossVectors(u, v);
+  if (n.length() < 1e-9) return null; // collinear boundary ⇒ no unique plane
+  return n.normalize();
+}
+
+/** True if the mesh has vertices on both sides of the plane (i.e. the plane actually separates it). */
+function separatesMesh(pos: THREE.BufferAttribute, n: THREE.Vector3, constant: number): boolean {
+  let hasPos = false, hasNeg = false;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i);
+    const s = n.dot(v) - constant;
+    if (s > 1e-4) hasPos = true;
+    else if (s < -1e-4) hasNeg = true;
+    if (hasPos && hasNeg) return true;
+  }
+  return false;
+}
+
+export function seamPlanes(geometry: THREE.BufferGeometry, labels: Int32Array): CutPlaneSpec[] {
+  const pos = geometry.attributes.position as THREE.BufferAttribute;
+  const faceCount = (geometry.index ? geometry.index.count : pos.count) / 3;
+
+  // welded edge → faces, remembering the edge endpoints
+  type Edge = { faces: number[]; a: THREE.Vector3; b: THREE.Vector3 };
+  const edgeMap = new Map<string, Edge>();
+  const va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3();
+  for (let f = 0; f < faceCount; f++) {
+    const [i0, i1, i2] = triIndices(geometry, f);
+    va.fromBufferAttribute(pos, i0); vb.fromBufferAttribute(pos, i1); vc.fromBufferAttribute(pos, i2);
+    const trio: Array<[THREE.Vector3, string]> = [
+      [va, posKey(va.x, va.y, va.z)], [vb, posKey(vb.x, vb.y, vb.z)], [vc, posKey(vc.x, vc.y, vc.z)],
+    ];
+    for (let e = 0; e < 3; e++) {
+      const [p1, k1] = trio[e], [p2, k2] = trio[(e + 1) % 3];
+      const ek = k1 < k2 ? `${k1}#${k2}` : `${k2}#${k1}`;
+      let rec = edgeMap.get(ek);
+      if (!rec) { rec = { faces: [], a: p1.clone(), b: p2.clone() }; edgeMap.set(ek, rec); }
+      rec.faces.push(f);
+    }
+  }
+
+  // collect boundary-edge endpoints per unordered region pair
+  const pairPts = new Map<string, THREE.Vector3[]>();
+  for (const rec of edgeMap.values()) {
+    if (rec.faces.length !== 2) continue;
+    const [f, g] = rec.faces;
+    const rf = labels[f], rg = labels[g];
+    if (rf === rg) continue;
+    const key = rf < rg ? `${rf}-${rg}` : `${rg}-${rf}`;
+    let arr = pairPts.get(key);
+    if (!arr) { arr = []; pairPts.set(key, arr); }
+    arr.push(rec.a, rec.b);
+  }
+
+  // fit + filter
+  const planes: CutPlaneSpec[] = [];
+  for (const pts of pairPts.values()) {
+    const centroid = new THREE.Vector3();
+    for (const p of pts) centroid.add(p);
+    centroid.multiplyScalar(1 / pts.length);
+    const n = fitNormal(pts, centroid);
+    if (!n) continue;
+    const constant = n.dot(centroid);
+    if (!separatesMesh(pos, n, constant)) continue;
+    planes.push({ normal: [n.x, n.y, n.z], constant, axisSnap: "free" });
+  }
+
+  // dedupe near-coincident planes (parallel + same offset, allowing sign flip)
+  const out: CutPlaneSpec[] = [];
+  for (const pl of planes) {
+    const dup = out.some((q) => {
+      const dot = pl.normal[0] * q.normal[0] + pl.normal[1] * q.normal[1] + pl.normal[2] * q.normal[2];
+      if (Math.abs(dot) < PARALLEL_DOT) return false;
+      const cAligned = dot >= 0 ? q.constant : -q.constant;
+      return Math.abs(pl.constant - cAligned) < COINCIDENT_C;
+    });
+    if (!dup) out.push(pl);
+  }
+  return out;
+}
+
+export function segmentCuts(geometry: THREE.BufferGeometry, opts: SegmentOptions): CutPlaneSpec[] {
+  const sdf = computeSDF(geometry);
+  const labels = segmentFaces(geometry, sdf, opts);
+  return seamPlanes(geometry, labels);
+}
+```
+
+- [ ] **Step 4: Run — expect PASS**  ·  `npx vitest run tests/cut/segment/seam-planes.test.ts`
+- [ ] **Step 5: Commit** — `git add src/lib/cut/segment/seam-planes.ts tests/cut/segment/seam-planes.test.ts && git commit` with
+  `feat(segment): seamPlanes + segmentCuts — fit a cut plane per region boundary (free orientation)`
+- [ ] **STOP is at the end of C-M3, not here — continue to Task 2.**
+
+---
+
+### Task 2: `segment` worker case + `runSegment` client
+
+**Files:**
+- Modify: `src/workers/cut-worker.ts`, `src/lib/cut/cut-client.ts`
+- Test: `tests/cut/segment/run-segment.test.ts`
+
+**Interfaces:**
+- Produces: `runSegment(mesh: THREE.Mesh, opts: { maxParts: number; detail: number }): Promise<CutPlaneSpec[]>`.
+- Worker: `CutWorkerRequest` gains `{ reqId; op: "segment"; meshGeometry; opts: { maxParts: number; detail: number } }`;
+  `CutWorkerResponse` gains `{ reqId; ok: true; planes: CutPlaneSpec[] }`.
+
+- [ ] **Step 1: Write the failing test** — mock the worker at the module boundary the same way existing
+  `cut-client` tests do (check `tests/` for the pattern: the worker is replaced so `submit` resolves a canned
+  response). Assert `runSegment` posts an `op:"segment"` request and resolves the response's `planes`.
+
+```ts
+// tests/cut/segment/run-segment.test.ts
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import * as THREE from "three";
+
+// Mirror the existing cut-client worker mock (see tests/**/cut-client*.test.ts for the exact shape).
+// The mock Worker captures the posted request and replies with a canned { ok, planes }.
+let lastReq: any = null;
+class MockWorker {
+  onmessage: ((e: MessageEvent) => void) | null = null;
+  postMessage(req: any) {
+    lastReq = req;
+    queueMicrotask(() =>
+      this.onmessage?.({ data: { reqId: req.reqId, ok: true, planes: [{ normal: [0, 0, 1], constant: 0, axisSnap: "free" }] } } as MessageEvent),
+    );
+  }
+  terminate() {}
+}
+vi.stubGlobal("Worker", MockWorker as any);
+
+import { runSegment } from "../../../src/lib/cut/cut-client";
+
+beforeEach(() => { lastReq = null; });
+
+describe("runSegment", () => {
+  it("posts an op:segment request and resolves planes", async () => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
+    const planes = await runSegment(mesh, { maxParts: 8, detail: 0.45 });
+    expect(lastReq.op).toBe("segment");
+    expect(lastReq.opts).toEqual({ maxParts: 8, detail: 0.45 });
+    expect(planes).toEqual([{ normal: [0, 0, 1], constant: 0, axisSnap: "free" }]);
+  });
+});
+```
+
+> **Spike note:** confirm the ACTUAL existing worker-mock pattern in the repo's cut-client tests and mirror it
+> exactly (global stub vs. `vi.mock` of the worker URL). Do not invent a new harness.
+
+- [ ] **Step 2: Run — expect FAIL** (`runSegment` not exported)
+- [ ] **Step 3: Implement**
+  - In `cut-worker.ts`: add the two union variants; add a dispatch branch after `const mesh = meshFromSerializedGeometry(...)`
+    (mirror `separate`): `if (e.data.op === "segment") { const planes = segmentCuts(mesh.geometry as THREE.BufferGeometry, e.data.opts); (self as any).postMessage({ reqId, ok: true, planes } satisfies CutWorkerResponse); return; }` and
+    `import { segmentCuts } from "../lib/cut/segment/seam-planes";`. Planes are plain objects — no transferables.
+  - In `cut-client.ts`: add
+    ```ts
+    export async function runSegment(mesh: THREE.Mesh, opts: { maxParts: number; detail: number }): Promise<CutPlaneSpec[]> {
+      const reqId = nextReqId++;
+      const { meshGeometry, transfer } = serializeMeshForWorker(mesh);
+      const req: CutWorkerRequest = { reqId, op: "segment", meshGeometry, opts };
+      return submit(req, transfer, (resp) => {
+        if ("planes" in resp) return resp.planes;
+        throw new Error("Unexpected response for segment request");
+      });
+    }
+    ```
+- [ ] **Step 4: Run — expect PASS**
+- [ ] **Step 5: Commit** — `feat(segment): segment worker case + runSegment client bridge`
+
+---
+
+### Task 3: Free-plane cut verification (the spec's open risk)
+
+**Files:**
+- Test: `tests/cut/segment/free-plane-cut.test.ts`
+
+**Interfaces:** Consumes the existing worker `cut` op via `runCut(mesh, plane, dowels, tolerance)` — NO new code.
+This task is a pure regression guard proving an `axisSnap:"free"` (non-axis-aligned) plane cuts cleanly through
+`planeCutMesh` + dowel placement, since every prior cut used axis snaps.
+
+- [ ] **Step 1: Write the test** — cut a box with an oblique plane (`normal` a normalized non-axis vector, e.g.
+  `(1,1,1)/√3`, `constant: 0`) plus one auto dowel; assert two non-empty parts come back and (if a dowel was
+  requested and fits) a dowel piece. Use the SAME worker-integration test style as the existing `runCut` tests —
+  if those run against the real Manifold worker they may be slow/gated; if the repo has a Manifold-in-worker test
+  already, mirror its setup. If real-worker cuts are not unit-testable in this repo, instead unit-test
+  `planeCutMesh` (`src/lib/cut/plane-cut.ts`) directly with an oblique `CutPlaneSpec` and assert both output
+  manifolds are non-empty (`!isEmpty()`), matching that module's existing tests.
+
+> **Spike note:** FIRST inspect how `plane-cut.ts` / `runCut` are currently tested. Reuse that harness (real
+> Manifold vs. mock). The assertion that matters: an oblique plane yields two valid, non-empty parts. Do not add a
+> slow real-Manifold test if the repo keeps those out of the default suite — prefer the `planeCutMesh` unit level.
+
+- [ ] **Step 2–4:** Run (expect FAIL if a helper is missing, else it may pass immediately — that's fine, it's a
+  guard), keep the assertion meaningful (non-empty parts), PASS.
+- [ ] **Step 5: Commit** — `test(segment): oblique free-plane cut produces two valid parts (Gap C open risk)`
+
+---
+
+### Task 4: Auto-Split button + App wiring
+
+**Files:**
+- Modify: `src/components/StatusBar.tsx` (add the button next to "Suggest cuts"), `src/App.tsx` (`onAutoSplit` + knobs state).
+- Test: extend a Toolbar/StatusBar test (or add `tests/components/auto-split-button.test.tsx`) asserting the button
+  invokes its handler.
+
+**Interfaces:**
+- `StatusBarProps` gains `onAutoSplit?: () => void;` rendered as an "Auto-Split" button in `FitIndicator`
+  alongside the existing `Suggest cuts` button (same styling).
+- `App.tsx` gains `onAutoSplit` (a `useCallback`) + two knob states `autoSplitMaxParts` (default 8) and
+  `autoSplitDetail` (default 0.45). It picks the target part (the first visible non-dowel part — reuse the
+  `onSuggestCuts` selection loop, but WITHOUT the `fitsInPrinter` gate, since a user may auto-split a fitting
+  model), calls `runSegment(mesh, { maxParts, detail })`, and on success `setSuggestedCuts({ partId, cuts: planes })`.
+  The existing modal + `performCutsSequential` apply the result unchanged.
+
+- [ ] **Step 1: Write the failing test** — render `StatusBar` (or the extracted `FitIndicator`) with an
+  `onAutoSplit` spy and `parts`/`printer` that surface the control; fire a click; assert the spy ran. Follow the
+  existing StatusBar/component test pattern in `tests/`.
+- [ ] **Step 2: Run — expect FAIL**
+- [ ] **Step 3: Implement**
+  - `StatusBar.tsx`: add `onAutoSplit?: () => void` to `StatusBarProps` and `FitIndicator`'s props; render a second
+    button `Auto-Split` next to `Suggest cuts` (guard `onAutoSplit &&`). Keep it visible whenever `onAutoSplit` is
+    passed (not only when parts are too big).
+  - `App.tsx`: add
+    ```ts
+    const [autoSplitMaxParts] = useState(8);
+    const [autoSplitDetail] = useState(0.45);
+    const onAutoSplit = useCallback(async () => {
+      const target = session.partsArray.find((p) => p.meta.visible && !p.isDowel);
+      if (!target) return;
+      const mesh = target.group.children.find((c): c is THREE.Mesh => (c as THREE.Mesh).isMesh);
+      if (!mesh) return;
+      const planes = await runSegment(mesh, { maxParts: autoSplitMaxParts, detail: autoSplitDetail });
+      if (planes.length > 0) setSuggestedCuts({ partId: target.id, cuts: planes });
+    }, [session.partsArray, autoSplitMaxParts, autoSplitDetail]);
+    ```
+    Wire `onAutoSplit={onAutoSplit}` into the `<StatusBar .../>` render. Import `runSegment` from `cut-client`.
+    (Confirm the actual way to get a part's `THREE.Mesh` from `RuntimePart` — inspect `partsArray[i].group`
+    structure; `serializeMeshForWorker` needs the mesh with its `matrixWorld`. Match how `onSuggestCuts`/other
+    handlers reach part geometry.) Max-parts/Detail sliders are optional polish — a default-valued `useState` is
+    enough for v1; only add slider inputs if the existing modal has an obvious place for them.
+- [ ] **Step 4: Run — expect PASS** (the click test)
+- [ ] **Step 5: Commit** — `feat(autosplit): Auto-Split button → runSegment → suggested-cut preview`
+
+---
+
+### Task 5: Verify + smoke doc
+
+- [ ] **Step 1:** `npm run test && npm run typecheck && npm run build:web && npm run build` → all PASS.
+- [ ] **Step 2:** Write `docs/p6-m3-autosplit-smoke-test.md`: the button→`runSegment`→suggested-planes→apply
+  round-trip; that suggested planes render as the existing Phase-3 gizmos and apply via `performCutsSequential`;
+  the oblique free-plane cut guard; and a **manual GUI checklist** (load a limbed model, Auto-Split, review/adjust
+  the amber gizmos, Apply, confirm printable parts + dowels) — the honest seam-quality caveat from the spec
+  (imperfect seams are expected; the reviewable gizmos are the safety net).
+- [ ] **Step 3: Commit** — `docs(p6-m3): auto-split smoke checklist + manual GUI review steps`
+- [ ] **STOP — pause for user review before landing the Gap C PR.**
 
 ---
 
