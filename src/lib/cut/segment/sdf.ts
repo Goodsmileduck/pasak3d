@@ -16,6 +16,12 @@ function median(xs: number[]): number {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
+// Reusable scratch for coneDir's basis vectors — avoids per-ray allocation in the hot loop.
+const CONE_UP_Z = new THREE.Vector3(0, 0, 1);
+const CONE_UP_X = new THREE.Vector3(1, 0, 0);
+const coneU = new THREE.Vector3();
+const coneV = new THREE.Vector3();
+
 /** A direction inside the cone around `axis` (half-angle `angle`), sample `i` of `n`. */
 function coneDir(axis: THREE.Vector3, angle: number, i: number, n: number, out: THREE.Vector3): THREE.Vector3 {
   if (i === 0 || angle <= 0) return out.copy(axis);
@@ -24,13 +30,13 @@ function coneDir(axis: THREE.Vector3, angle: number, i: number, n: number, out: 
   const theta = t * angle;                 // polar from axis
   const phi = i * 2.399963;                // golden-angle azimuth
   // build a basis around axis
-  const up = Math.abs(axis.z) < 0.9 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
-  const u = new THREE.Vector3().crossVectors(axis, up).normalize();
-  const v = new THREE.Vector3().crossVectors(axis, u);
+  const up = Math.abs(axis.z) < 0.9 ? CONE_UP_Z : CONE_UP_X;
+  coneU.crossVectors(axis, up).normalize();
+  coneV.crossVectors(axis, coneU);
   const sin = Math.sin(theta);
   return out.copy(axis).multiplyScalar(Math.cos(theta))
-    .addScaledVector(u, sin * Math.cos(phi))
-    .addScaledVector(v, sin * Math.sin(phi))
+    .addScaledVector(coneU, sin * Math.cos(phi))
+    .addScaledVector(coneV, sin * Math.sin(phi))
     .normalize();
 }
 
@@ -46,6 +52,8 @@ export function computeSDF(geometry: THREE.BufferGeometry, opts: SDFOptions = {}
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
   const centroid = new THREE.Vector3(), normal = new THREE.Vector3(), inward = new THREE.Vector3();
   const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), dir = new THREE.Vector3();
+  const origin = new THREE.Vector3();
+  const ray = new THREE.Ray();
 
   for (let f = 0; f < faceCount; f++) {
     const [i0, i1, i2] = triIndices(geometry, f);
@@ -59,8 +67,8 @@ export function computeSDF(geometry: THREE.BufferGeometry, opts: SDFOptions = {}
       coneDir(inward, coneAngle, r, rayCount, dir);
       // Reject rays that flip to the outward hemisphere.
       if (dir.dot(inward) <= 0) continue;
-      const origin = centroid.clone().addScaledVector(dir, 1e-4); // nudge off the face to skip self-hit
-      const ray = new THREE.Ray(origin, dir);
+      origin.copy(centroid).addScaledVector(dir, 1e-4); // nudge off the face to skip self-hit
+      ray.set(origin, dir);
       const hit = bvh.raycastFirst(ray, THREE.DoubleSide);
       if (hit && hit.distance > 1e-3) dists.push(hit.distance);
     }
