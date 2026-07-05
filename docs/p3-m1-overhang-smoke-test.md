@@ -23,3 +23,7 @@ Run before declaring P3-M1 overhang heatmap work complete:
 
 - Bed-cut preview remains deferred to P3-M2
 - Manual visual validation is required for heatmap readability across representative models
+- Wireframe + overhang are independent view toggles applied by separate effects; enabling
+  overhang while wireframe is on shows the solid heatmap (wireframe flag not carried onto the
+  heatmap material). View-only, recoverable by re-toggling wireframe. Low priority; revisit if
+  the combined view is wanted.
