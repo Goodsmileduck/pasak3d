@@ -987,6 +987,208 @@ This task is a pure regression guard proving an `axisSnap:"free"` (non-axis-alig
 
 ---
 
+# C-M4 — Hardening (from final whole-branch review)
+
+The final review found three Important integration/UX defects the single-plane tests missed. This milestone
+fixes them **additively** — a dedicated auto-split apply path (the existing `performCutsSequential` for
+fit-to-printer is left untouched), a segmentation busy state, and a printer-independent button.
+
+## Verified problem (in the code)
+
+`performCutsSequential` (`src/hooks/useCutSession.ts:177-208`) was built for fit-to-printer grid cuts: it cuts,
+then **follows only the larger child** (`target = sizeA >= sizeB ? …`), and calls `push(working)` **only after
+the whole loop succeeds**. Auto-split emits N **independent infinite planes** (one per region boundary, fitted in
+the whole-mesh frame). On a branched/limbed model a later plane may not intersect the followed child →
+`planeCutMesh` throws "does not intersect" → the `catch` discards **all** partial cuts. Auto-split needs its own
+apply that (a) routes each plane to the leaf part it actually separates and (b) tolerates a plane that cuts
+nothing (skip it, keep the rest).
+
+---
+
+### Task 1: tolerant, leaf-assigning auto-split apply
+
+**Files:**
+- Create: `src/lib/cut/plane-util.ts` — pure `planeSeparatesMesh`.
+- Test: `tests/cut/plane-util.test.ts`.
+- Modify: `src/hooks/useCutSession.ts` — add `performAutoSplitCuts` (expose it from the hook's return).
+- Modify: `src/App.tsx` — the suggested-cut modal's Apply routes auto-split suggestions to the new method.
+
+**Interfaces:**
+- Produces: `planeSeparatesMesh(mesh: THREE.Mesh, plane: CutPlaneSpec): boolean` — true iff the mesh, in **world
+  space** (`mesh.matrixWorld`), has vertices on both sides of the plane.
+- Produces: `performAutoSplitCuts(rootPartId: PartId, planes: CutPlaneSpec[], dowelOpts): Promise<void>` on the
+  `useCutSession` return, alongside `performCutsSequential`.
+- `App.tsx` `suggestedCuts` state gains `source: "fit" | "autosplit"`; `onSuggestCuts` sets `"fit"`, `onAutoSplit`
+  sets `"autosplit"`; the modal Apply calls `performAutoSplitCuts` when `source === "autosplit"`, else
+  `performCutsSequential` (unchanged behavior for fit-to-printer).
+
+- [ ] **Step 1: Write the failing test** (the pure decision helper — the apply loop itself is smoke-tested,
+  it needs the real Manifold worker)
+
+```ts
+// tests/cut/plane-util.test.ts
+import { describe, it, expect } from "vitest";
+import * as THREE from "three";
+import { planeSeparatesMesh } from "../../src/lib/cut/plane-util";
+
+describe("planeSeparatesMesh", () => {
+  const box = () => new THREE.Mesh(new THREE.BoxGeometry(10, 10, 10));
+
+  it("true when the plane passes through the mesh", () => {
+    expect(planeSeparatesMesh(box(), { normal: [0, 0, 1], constant: 0, axisSnap: "free" })).toBe(true);
+  });
+  it("false when the mesh is entirely on one side", () => {
+    expect(planeSeparatesMesh(box(), { normal: [0, 0, 1], constant: 100, axisSnap: "free" })).toBe(false);
+  });
+  it("respects world transform (offset mesh)", () => {
+    const m = box();
+    m.position.set(0, 0, 100);
+    m.updateMatrixWorld(true);
+    // plane at z=0 no longer cuts a box centred at z=100 (spans 95..105)
+    expect(planeSeparatesMesh(m, { normal: [0, 0, 1], constant: 0, axisSnap: "free" })).toBe(false);
+    // plane at z=100 does
+    expect(planeSeparatesMesh(m, { normal: [0, 0, 1], constant: 100, axisSnap: "free" })).toBe(true);
+  });
+  it("handles an oblique plane through the centre", () => {
+    const s = 1 / Math.sqrt(3);
+    expect(planeSeparatesMesh(box(), { normal: [s, s, s], constant: 0, axisSnap: "free" })).toBe(true);
+  });
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL**  ·  `npx vitest run tests/cut/plane-util.test.ts`
+- [ ] **Step 3: Implement**
+
+```ts
+// src/lib/cut/plane-util.ts
+import * as THREE from "three";
+import type { CutPlaneSpec } from "../../types";
+
+/** True if the mesh (world space) has vertices on both sides of the plane — i.e. the plane would cut it. */
+export function planeSeparatesMesh(mesh: THREE.Mesh, plane: CutPlaneSpec): boolean {
+  const geom = mesh.geometry as THREE.BufferGeometry;
+  const pos = geom.attributes.position as THREE.BufferAttribute;
+  mesh.updateMatrixWorld(true);
+  const n = new THREE.Vector3(plane.normal[0], plane.normal[1], plane.normal[2]);
+  const v = new THREE.Vector3();
+  let hasPos = false, hasNeg = false;
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+    const s = n.dot(v) - plane.constant;
+    if (s > 1e-4) hasPos = true;
+    else if (s < -1e-4) hasNeg = true;
+    if (hasPos && hasNeg) return true;
+  }
+  return false;
+}
+```
+
+  Then add `performAutoSplitCuts` to `useCutSession` (mirror `performCutsSequential` at lines 166-216, but with
+  leaf routing + per-plane tolerance; child ids follow the existing `${target}_a`/`${target}_b` convention):
+
+```ts
+const performAutoSplitCuts = useCallback(
+  async (
+    rootPartId: PartId,
+    planes: CutPlaneSpec[],
+    defaultDowelOpts: { count: number; diameter: number; length: number; tolerance: TolerancePreset },
+  ) => {
+    if (planes.length === 0) return;
+    setBusy(true);
+    setError(null);
+    let working = session;
+    let leaves: PartId[] = [rootPartId];
+    let applied = 0;
+    try {
+      for (const plane of planes) {
+        const targetId = leaves.find((id) => {
+          const p = working.parts.get(id);
+          return p ? planeSeparatesMesh(p.mesh, plane) : false;
+        });
+        if (!targetId) continue; // no current leaf this plane cuts — skip it, keep the rest
+        const part = working.parts.get(targetId)!;
+        try {
+          const dowels = autoPlaceCutDowels(part.mesh, plane, {
+            count: defaultDowelOpts.count,
+            dowelDiameter: defaultDowelOpts.diameter,
+            length: defaultDowelOpts.length,
+            minSpacing: 2,
+          });
+          const result = await runCut(part.mesh, plane, dowels, defaultDowelOpts.tolerance);
+          const a = firstMeshAndGroup(result.partA);
+          const b = firstMeshAndGroup(result.partB);
+          if (!a || !b) continue;
+          const dps = result.dowelPieces
+            .map(firstMeshAndGroup)
+            .filter((x): x is { mesh: THREE.Mesh; group: THREE.Group } => !!x);
+          working = applyCutResult(working, targetId, `c${working.cuts.length + 1}`,
+            { partA: a, partB: b, dowelPieces: dps }, part.meta.name);
+          leaves = leaves.filter((id) => id !== targetId).concat([`${targetId}_a` as PartId, `${targetId}_b` as PartId]);
+          applied++;
+        } catch {
+          // this plane failed to cut its leaf — skip it, preserve prior cuts
+        }
+      }
+      if (applied > 0) {
+        syncSessionColors(working);
+        push(working);
+      }
+    } finally {
+      setBusy(false);
+    }
+  },
+  [session, push],
+);
+```
+
+  Return `performAutoSplitCuts` from the hook. In `App.tsx`: add `source` to `suggestedCuts` state
+  (`{ partId; cuts; source: "fit" | "autosplit" }`); `onSuggestCuts` → `source: "fit"`, `onAutoSplit` →
+  `source: "autosplit"`; the modal Apply (lines 587-604) branches:
+  `suggestedCuts.source === "autosplit" ? session.performAutoSplitCuts(...) : session.performCutsSequential(...)`.
+
+- [ ] **Step 4: Run — expect PASS** (plane-util test) + full suite green.
+- [ ] **Step 5: Commit** — `fix(autosplit): dedicated tolerant leaf-assigning apply — skip non-intersecting planes`
+
+---
+
+### Task 2: busy state during segmentation
+
+**Files:** Modify `src/App.tsx` (+ the spinner condition).
+
+- [ ] Add `const [segmenting, setSegmenting] = useState(false)` in `App`; in `onAutoSplit`, wrap the `runSegment`
+  call: `setSegmenting(true)` before, `setSegmenting(false)` in a `finally`. OR the segmentation apply guard shows a spinner.
+- [ ] Include `segmenting` in whatever drives the "Cutting…"/busy spinner (currently `session.busy`, ~App.tsx:545) —
+  e.g. `const busy = session.busy || segmenting;` so the user gets immediate feedback on click.
+- [ ] Verify + commit — `feat(autosplit): busy spinner while segmenting`
+
+---
+
+### Task 3: printer-independent Auto-Split button
+
+**Files:** Modify `src/components/StatusBar.tsx`.
+
+- [ ] Move the Auto-Split button OUT of `FitIndicator` (which early-returns when `!printer`). Render it in the main
+  `StatusBar` row whenever `onAutoSplit` is set **and** there is a visible non-dowel part
+  (`parts?.some((p) => p.visible && !p.isDowel)`), independent of printer state. Keep "Suggest cuts" inside
+  `FitIndicator` (it genuinely needs a printer).
+- [ ] Extend `tests/components/StatusBar.test.tsx`: Auto-Split fires its handler **with no printer set**.
+- [ ] Verify + commit — `fix(autosplit): surface Auto-Split without a printer (segmentation is printer-independent)`
+
+---
+
+### Task 4: verify + smoke doc update
+
+- [ ] `npm run test && npm run typecheck && npm run build:web && npm run build` → all PASS.
+- [ ] Update `docs/p6-m3-autosplit-smoke-test.md` (or add `docs/p6-m4-hardening-smoke-test.md`): the tolerant apply
+  (branched model → partial cuts preserved, non-intersecting planes skipped, no total abort); busy spinner on click;
+  printer-independent button. Note the remaining **Minor** follow-ups (#4 dead knobs/doc, #5 dowel-length cap +
+  `safeDowelLength` "free" axis, #6 collinear-boundary orientation) and the residual **over-cut** caveat (infinite
+  planes can clip other features — the reviewable gizmos let the user delete a bad plane before applying).
+- [ ] Commit — `docs(p6-m4): hardening smoke checklist + tracked minor follow-ups`
+- [ ] **STOP — pause for user review before landing the Gap C PR.**
+
+---
+
 ## Self-review (spec coverage)
 
 - SDF per face (BVH ray-cone) → C-M1 ✅. Region-grow + concavity + merge/cap → C-M2 ✅. Seam→plane fit + worker + UI → C-M3 ✅.
