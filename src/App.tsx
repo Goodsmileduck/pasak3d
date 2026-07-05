@@ -63,6 +63,7 @@ export default function App() {
   const [suggestedCuts, setSuggestedCuts] = useState<SuggestedCutsState | null>(null);
   const [autoSplitMaxParts] = useState(8);
   const [autoSplitDetail] = useState(0.45);
+  const [segmenting, setSegmenting] = useState(false);
   const suggestedBbox = useMemo(() => {
     if (!suggestedCuts) return null;
     const p = session.session.parts.get(suggestedCuts.partId);
@@ -347,12 +348,15 @@ export default function App() {
   const onAutoSplit = useCallback(async () => {
     const target = session.partsArray.find((p) => p.meta.visible && !p.isDowel);
     if (!target) return;
+    setSegmenting(true);
     try {
       setError(null);
       const planes = await runSegment(target.mesh, { maxParts: autoSplitMaxParts, detail: autoSplitDetail });
       if (planes.length > 0) setSuggestedCuts({ partId: target.id, cuts: planes, source: "autosplit" });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSegmenting(false);
     }
   }, [session.partsArray, autoSplitMaxParts, autoSplitDetail]);
 
@@ -371,6 +375,7 @@ export default function App() {
     : undefined;
 
   const hasContent = importRoot !== null;
+  const busy = session.busy || segmenting;
 
   const startCut = (axis: "x" | "y" | "z") => {
     if (!activePart) return;
@@ -543,7 +548,7 @@ export default function App() {
               isDark={isDark}
             />
           )}
-          {session.busy && (
+          {busy && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 bg-[var(--ink)] text-[var(--surface)] text-sm px-3 py-1.5 rounded-full shadow-lg">
               <Spinner className="w-4 h-4" />
               <span>Cutting…</span>
