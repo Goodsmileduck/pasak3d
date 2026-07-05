@@ -23,10 +23,19 @@ function keySolid(M: any, size: number, length: number, grow: number): any {
   nominal.delete();
 
   // Barbs: a sphere flattened to the paddle aspect → smooth (self-inserting) undercut at each end.
+  // Capture + delete every intermediate (sphere, scaled) — chaining .scale()/.translate() leaks the
+  // receiver on the WASM heap (see lessons_learned: the placeSolid transform-intermediate leak).
   const rBarb = size * 0.6 + grow;
-  const barb = () => M.Manifold.sphere(rBarb, 48).scale([1, 0.55, 1] as [number, number, number]);
-  const top = barb().translate([0, 0, length / 2] as [number, number, number]);
-  const bot = barb().translate([0, 0, -length / 2] as [number, number, number]);
+  const barb = (z: number): any => {
+    const sphere = M.Manifold.sphere(rBarb, 48);
+    const flat = sphere.scale([1, 0.55, 1] as [number, number, number]);
+    sphere.delete();
+    const placed = flat.translate([0, 0, z] as [number, number, number]);
+    flat.delete();
+    return placed;
+  };
+  const top = barb(length / 2);
+  const bot = barb(-length / 2);
 
   const withTop = body.add(top);
   assertNoError(withTop, "snap-key body+top barb");
