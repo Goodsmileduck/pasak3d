@@ -40,7 +40,7 @@ export function segmentFaces(
   const pos = geometry.attributes.position as THREE.BufferAttribute;
   const faceCount = (geometry.index ? geometry.index.count : pos.count) / 3;
 
-  // --- 1. per-face centroid / normal / area / band ---
+  // --- 1. per-face centroid / normal / area / band, plus welded edge → faces (+ edge length) ---
   const cx = new Float32Array(faceCount), cy = new Float32Array(faceCount), cz = new Float32Array(faceCount);
   const nx = new Float32Array(faceCount), ny = new Float32Array(faceCount), nz = new Float32Array(faceCount);
   const area = new Float32Array(faceCount);
@@ -52,6 +52,7 @@ export function segmentFaces(
   if (maxSdf <= 0) maxSdf = 1;
   const bandCount = Math.min(12, Math.max(2, Math.round(2 + opts.detail * 10)));
 
+  const edgeMap = new Map<string, { faces: number[]; len: number }>();
   for (let f = 0; f < faceCount; f++) {
     const [i0, i1, i2] = triIndices(geometry, f);
     va.fromBufferAttribute(pos, i0); vb.fromBufferAttribute(pos, i1); vc.fromBufferAttribute(pos, i2);
@@ -62,13 +63,7 @@ export function segmentFaces(
     nx[f] = nrm.x; ny[f] = nrm.y; nz[f] = nrm.z;
     cx[f] = (va.x + vb.x + vc.x) / 3; cy[f] = (va.y + vb.y + vc.y) / 3; cz[f] = (va.z + vb.z + vc.z) / 3;
     band[f] = Math.min(bandCount - 1, Math.max(0, Math.floor((sdf[f] / maxSdf) * bandCount)));
-  }
 
-  // --- 2. welded edge → faces (+ edge length) ---
-  const edgeMap = new Map<string, { faces: number[]; len: number }>();
-  for (let f = 0; f < faceCount; f++) {
-    const [i0, i1, i2] = triIndices(geometry, f);
-    va.fromBufferAttribute(pos, i0); vb.fromBufferAttribute(pos, i1); vc.fromBufferAttribute(pos, i2);
     const ka = posKey(va.x, va.y, va.z), kb = posKey(vb.x, vb.y, vb.z), kc = posKey(vc.x, vc.y, vc.z);
     const edges: Array<[string, string, number]> = [
       [ka, kb, va.distanceTo(vb)],
@@ -83,7 +78,7 @@ export function segmentFaces(
     }
   }
 
-  // --- 3. union across non-breaking interior edges ---
+  // --- 2. union across non-breaking interior edges ---
   const dsu = new DSU(faceCount);
   for (const rec of edgeMap.values()) {
     if (rec.faces.length !== 2) continue; // boundary / non-manifold
@@ -107,7 +102,7 @@ export function segmentFaces(
     labels[f] = id;
   }
 
-  // --- 4. merge sub-threshold + cap (recompute each pass; region counts are small) ---
+  // --- 3. merge sub-threshold + cap (recompute each pass; region counts are small) ---
   const aggregate = () => {
     const ids = new Set<number>();
     for (let f = 0; f < faceCount; f++) ids.add(labels[f]);
@@ -141,24 +136,23 @@ export function segmentFaces(
 
   for (let guard = 0; guard < faceCount + 8; guard++) {
     const { ids, regionArea, total, adj } = aggregate();
-    // sub-threshold: smallest region below the ratio that has a neighbor
-    let target = -1, targetArea = Infinity;
-    for (const id of ids) {
-      const frac = total > 0 ? regionArea.get(id)! / total : 0;
-      if (frac < GEO_MIN_REGION_RATIO && bestNeighbor(adj, id) !== null) {
-        const aVal = regionArea.get(id)!;
-        if (aVal < targetArea || (aVal === targetArea && id < target)) { target = id; targetArea = aVal; }
+    // smallest region (by area, ties broken by lowest id) satisfying `predicate` and having a mergeable neighbor
+    const pickSmallestMergeable = (predicate: (id: number) => boolean): number => {
+      let best = -1, bestArea = Infinity;
+      for (const id of ids) {
+        if (!predicate(id) || bestNeighbor(adj, id) === null) continue;
+        const a = regionArea.get(id)!;
+        if (a < bestArea || (a === bestArea && id < best)) { best = id; bestArea = a; }
       }
-    }
+      return best;
+    };
+
+    // sub-threshold: smallest region below the ratio that has a neighbor
+    const target = pickSmallestMergeable((id) => (total > 0 ? regionArea.get(id)! / total : 0) < GEO_MIN_REGION_RATIO);
     if (target !== -1) { mergeInto(target, bestNeighbor(adj, target)!); continue; }
     // cap: while too many regions, merge the smallest region that has a neighbor
     if (ids.size > opts.maxParts) {
-      let smallest = -1, smallestArea = Infinity;
-      for (const id of ids) {
-        if (bestNeighbor(adj, id) === null) continue;
-        const aVal = regionArea.get(id)!;
-        if (aVal < smallestArea || (aVal === smallestArea && id < smallest)) { smallest = id; smallestArea = aVal; }
-      }
+      const smallest = pickSmallestMergeable(() => true);
       if (smallest !== -1) { mergeInto(smallest, bestNeighbor(adj, smallest)!); continue; }
     }
     break;
