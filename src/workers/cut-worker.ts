@@ -7,6 +7,7 @@ import { applyConnectors } from "../lib/cut/connectors/apply";
 import { applySeamLabel } from "../lib/cut/joints/labels";
 import { getConnector } from "../lib/cut/connectors/registry";
 import { generateConnectorTestFit, generateTestFitPairs, type TestFitOpts } from "../lib/cut/test-fit";
+import { segmentCuts } from "../lib/cut/segment/seam-planes";
 import type { CutPlaneSpec, Joint, TolerancePreset } from "../types";
 
 export type SerializedMesh = { positions: Float32Array; indices: Uint32Array };
@@ -32,6 +33,12 @@ export type CutWorkerRequest =
     }
   | {
       reqId: number;
+      op: "segment";
+      meshGeometry: { positions: Float32Array; indices: Uint32Array | null };
+      opts: { maxParts: number; detail: number };
+    }
+  | {
+      reqId: number;
       op: "label";
       meshGeometry: { positions: Float32Array; indices: Uint32Array | null };
       label: {
@@ -48,6 +55,7 @@ export type CutWorkerResponse =
   | { reqId: number; ok: true; partA: SerializedMesh; partB: SerializedMesh; dowelPieces: SerializedMesh[] }
   | { reqId: number; ok: true; coupons: { name: string; mesh: SerializedMesh }[] }
   | { reqId: number; ok: true; components: SerializedMesh[] }
+  | { reqId: number; ok: true; planes: CutPlaneSpec[] }
   | { reqId: number; ok: true; labeled: SerializedMesh }
   | { reqId: number; ok: false; error: string };
 
@@ -95,6 +103,12 @@ self.onmessage = async (e: MessageEvent<CutWorkerRequest>) => {
       } finally {
         for (const c of comps) c.delete();
       }
+      return;
+    }
+
+    if (e.data.op === "segment") {
+      const planes = segmentCuts(mesh.geometry as THREE.BufferGeometry, e.data.opts);
+      (self as any).postMessage({ reqId, ok: true, planes } satisfies CutWorkerResponse);
       return;
     }
 
