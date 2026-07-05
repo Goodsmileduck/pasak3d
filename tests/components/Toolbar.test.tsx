@@ -88,4 +88,11 @@ describe("Toolbar", () => {
     );
     expect(screen.getByTestId("my-slot")).toBeInTheDocument();
   });
+
+  it("calls onToggleOverhang when the Overhang button is clicked", async () => {
+    const onToggle = vi.fn();
+    render(<Toolbar onOpen={vi.fn()} onExport={vi.fn()} onTestFit={vi.fn()} canExport={false} onToggleOverhang={onToggle} />);
+    await userEvent.click(screen.getByRole("button", { name: /overhang/i }));
+    expect(onToggle).toHaveBeenCalled();
+  });
 });

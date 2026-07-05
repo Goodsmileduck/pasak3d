@@ -10,6 +10,8 @@ type Props = {
   canUndo?: boolean;
   canRedo?: boolean;
   printerSlot?: ReactNode;
+  overhangOn?: boolean;
+  onToggleOverhang?: () => void;
   isDark?: boolean;
   onToggleTheme?: () => void;
 };
@@ -24,6 +26,8 @@ export function Toolbar({
   canUndo,
   canRedo,
   printerSlot,
+  overhangOn,
+  onToggleOverhang,
   isDark,
   onToggleTheme,
 }: Props) {
@@ -46,6 +50,17 @@ export function Toolbar({
       </button>
       <div className="flex-1" />
       {printerSlot}
+      {onToggleOverhang && (
+        <button
+          className={overhangOn
+            ? "px-3 py-1 rounded bg-[var(--ink)] text-[var(--surface)] hover:opacity-90 transition-opacity"
+            : "btn-neutral px-3 py-1"}
+          onClick={onToggleOverhang}
+          aria-pressed={overhangOn}
+        >
+          Overhang
+        </button>
+      )}
       <button
         className="btn-neutral px-3 py-1"
         onClick={onTestFit}
