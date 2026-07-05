@@ -9,6 +9,7 @@ interface StatusBarProps {
   parts?: Array<{ visible: boolean; isDowel: boolean; group: THREE.Group }>;
   printer?: PrinterPreset | null;
   onSuggestCuts?: () => void;
+  onAutoSplit?: () => void;
 }
 
 function formatFileSize(bytes: number): string {
@@ -20,10 +21,12 @@ function FitIndicator({
   parts,
   printer,
   onSuggestCuts,
+  onAutoSplit,
 }: {
   parts: Array<{ visible: boolean; isDowel: boolean; group: THREE.Group }>;
   printer: PrinterPreset | null | undefined;
   onSuggestCuts?: () => void;
+  onAutoSplit?: () => void;
 }) {
   if (!printer) {
     return (
@@ -43,8 +46,13 @@ function FitIndicator({
 
   if (tooBig.length === 0) {
     return (
-      <span className="ml-auto px-2 py-0.5 rounded-full text-xs bg-[var(--success-tint)] text-[var(--success)]">
-        All parts fit {printer.name}
+      <span className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-[var(--success-tint)] text-[var(--success)]">
+        <span>All parts fit {printer.name}</span>
+        {onAutoSplit && (
+          <button className="underline hover:no-underline" onClick={onAutoSplit}>
+            Auto-Split
+          </button>
+        )}
       </span>
     );
   }
@@ -57,11 +65,16 @@ function FitIndicator({
           Suggest cuts
         </button>
       )}
+      {onAutoSplit && (
+        <button className="underline hover:no-underline" onClick={onAutoSplit}>
+          Auto-Split
+        </button>
+      )}
     </span>
   );
 }
 
-export function StatusBar({ info, error, isLoading, parts, printer, onSuggestCuts }: StatusBarProps) {
+export function StatusBar({ info, error, isLoading, parts, printer, onSuggestCuts, onAutoSplit }: StatusBarProps) {
   const separator = "hidden md:inline text-[var(--ink-faint)]";
 
   return (
@@ -82,7 +95,12 @@ export function StatusBar({ info, error, isLoading, parts, printer, onSuggestCut
             {info.dimensions.x.toFixed(1)} × {info.dimensions.y.toFixed(1)} × {info.dimensions.z.toFixed(1)} mm
           </span>
           {parts !== undefined && (
-            <FitIndicator parts={parts} printer={printer} onSuggestCuts={onSuggestCuts} />
+            <FitIndicator
+              parts={parts}
+              printer={printer}
+              onSuggestCuts={onSuggestCuts}
+              onAutoSplit={onAutoSplit}
+            />
           )}
         </>
       )}

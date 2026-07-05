@@ -19,7 +19,7 @@ import { useTheme } from "./hooks/useTheme";
 import { loadModel } from "./lib/loaders";
 import { useCutSession } from "./hooks/useCutSession";
 import { autoPlaceCutDowels } from "./lib/cut/auto-place-cut-dowels";
-import { runConnectorTestFit } from "./lib/cut/cut-client";
+import { runConnectorTestFit, runSegment } from "./lib/cut/cut-client";
 import { TESTFIT_DEFAULTS } from "./lib/cut/test-fit";
 import { DEFAULT_CONNECTOR_ID, getConnector } from "./lib/cut/connectors/registry";
 import { buildZipExport } from "./lib/exporters/zip-export";
@@ -60,6 +60,8 @@ export default function App() {
   const [previewPlane, setPreviewPlane] = useState<CutPlaneSpec | null>(null);
   const [previewDowels, setPreviewDowels] = useState<Dowel[]>([]);
   const [suggestedCuts, setSuggestedCuts] = useState<{ partId: PartId; cuts: CutPlaneSpec[] } | null>(null);
+  const [autoSplitMaxParts] = useState(8);
+  const [autoSplitDetail] = useState(0.45);
   const suggestedBbox = useMemo(() => {
     if (!suggestedCuts) return null;
     const p = session.session.parts.get(suggestedCuts.partId);
@@ -341,6 +343,18 @@ export default function App() {
     setSuggestedCuts({ partId: target.id, cuts: suggestCuts(target.bbox, printer) });
   }, [session.session.printer, session.partsArray]);
 
+  const onAutoSplit = useCallback(async () => {
+    const target = session.partsArray.find((p) => p.meta.visible && !p.isDowel);
+    if (!target) return;
+    try {
+      setError(null);
+      const planes = await runSegment(target.mesh, { maxParts: autoSplitMaxParts, detail: autoSplitDetail });
+      if (planes.length > 0) setSuggestedCuts({ partId: target.id, cuts: planes });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [session.partsArray, autoSplitMaxParts, autoSplitDetail]);
+
   // Build the viewer's cutParts list from all visible parts when a cut has been done.
   // When no cut has happened yet, the imported root part is passed as rootGroup.
   const importRoot = session.partsArray.find((p) => p.meta.source === "import") ?? null;
@@ -573,6 +587,7 @@ export default function App() {
           parts={session.partsArray.map((p) => ({ visible: p.meta.visible, isDowel: p.isDowel, group: p.group }))}
           printer={session.session.printer}
           onSuggestCuts={onSuggestCuts}
+          onAutoSplit={onAutoSplit}
         />
       )}
       {showExportDialog && (
