@@ -45,4 +45,13 @@ describe("CutPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: /test.?fit/i }));
     expect(onTestFit).toHaveBeenCalled();
   });
+
+  it("switching category resyncs the connector so App state matches the display", async () => {
+    // A keyed connector is selected; switching to Snap must adopt the first snap
+    // connector (else Cut/Test-fit would act on the stale keyed id shown by App).
+    const onConnector = vi.fn();
+    render(<CutPanel {...baseProps} connectorId="cylinder" onConnectorChange={onConnector} />);
+    await userEvent.click(screen.getByRole("button", { name: /^snap$/i }));
+    expect(onConnector).toHaveBeenCalledWith("snap-pin");
+  });
 });

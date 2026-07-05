@@ -146,7 +146,20 @@ export function CutPanel({
                 key={cat}
                 type="button"
                 className={`flex-1 px-2 py-1 text-xs transition-colors ${connectorCategory === cat ? "bg-[var(--ink)] text-[var(--surface)]" : "bg-[var(--surface-2)] text-[var(--ink)] hover:bg-[var(--surface-3)]"}`}
-                onClick={() => setConnectorCategory(cat)}
+                onClick={() => {
+                  setConnectorCategory(cat);
+                  // If the current connector isn't in the new category, adopt its first —
+                  // otherwise App's connectorId (used by Cut and Test-fit) diverges from
+                  // the connector shown selected.
+                  const inCat = listByCategory(cat);
+                  if (!inCat.some((c) => c.id === connectorId) && inCat[0]) {
+                    const next = inCat[0].id;
+                    const nextShape = shapeForConnector(next, jointShape);
+                    onConnectorChange?.(next);
+                    onJointShapeChange?.(nextShape);
+                    fire(onPreviewChange, nextShape, jointPolarity, next);
+                  }
+                }}
               >
                 {titleCase(cat)}
               </button>
