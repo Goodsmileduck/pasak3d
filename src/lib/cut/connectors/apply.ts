@@ -1,8 +1,21 @@
 import type { Joint, TolerancePreset } from "../../../types";
 import { applyJoints, type ApplyJointsResult } from "../joints/apply";
 import { placeSolid } from "../joints/orient";
+import { cantileverClipConnector } from "./snap/cantilever-clip";
 import { getConnector, isM1Shape } from "./registry";
 import { resolveConnectorParams, type Connector } from "./types";
+
+function assertNoError(solid: any, label: string): void {
+  const status = solid.status();
+  if (status !== "NoError") {
+    throw new Error(`${label}: ${status}`);
+  }
+}
+
+function getP2M3Connector(id: string): Connector | undefined {
+  if (id === cantileverClipConnector.id) return cantileverClipConnector;
+  return getConnector(id);
+}
 
 function applySeparatePiece(
   M: any,
@@ -24,6 +37,8 @@ function applySeparatePiece(
 
     const newA = outA.subtract(cavity);
     const newB = outB.subtract(cavity);
+    assertNoError(newA, `applySeparatePiece ${connector.id} partA`);
+    assertNoError(newB, `applySeparatePiece ${connector.id} partB`);
     if (outA !== partA) outA.delete();
     if (outB !== partB) outB.delete();
     outA = newA;
@@ -38,6 +53,46 @@ function applySeparatePiece(
   }
 
   return { partA: outA, partB: outB, jointPieces };
+}
+
+function applyIntegral(
+  M: any,
+  partA: any,
+  partB: any,
+  joints: Joint[],
+  connector: Connector,
+  preset: TolerancePreset,
+): ApplyJointsResult {
+  let outA = partA;
+  let outB = partB;
+
+  for (const j of joints) {
+    const p = resolveConnectorParams(j, preset);
+    const maleLocal = connector.build.integralMale?.(M, p);
+    if (!maleLocal) {
+      throw new Error(`applyIntegral: connector ${connector.id} has no integral male.`);
+    }
+    const male = placeSolid(maleLocal, j.position, j.axis);
+    maleLocal.delete();
+
+    const newA = outA.add(male);
+    assertNoError(newA, `applyIntegral ${connector.id} partA`);
+    if (outA !== partA) outA.delete();
+    outA = newA;
+    male.delete();
+
+    const cavityLocal = connector.build.femaleCavity(M, p);
+    const cavity = placeSolid(cavityLocal, j.position, j.axis);
+    cavityLocal.delete();
+
+    const newB = outB.subtract(cavity);
+    assertNoError(newB, `applyIntegral ${connector.id} partB`);
+    if (outB !== partB) outB.delete();
+    outB = newB;
+    cavity.delete();
+  }
+
+  return { partA: outA, partB: outB, jointPieces: [] };
 }
 
 /**
@@ -62,13 +117,16 @@ export function applyConnectors(
   }
   const id = joints.find((j) => j.connectorId)?.connectorId;
   if (id && !isM1Shape(id)) {
-    const connector = getConnector(id);
+    const connector = getP2M3Connector(id);
+    if (connector?.assembly === "integral") {
+      return applyIntegral(M, partA, partB, joints, connector, preset);
+    }
     if (connector) return applySeparatePiece(M, partA, partB, joints, connector, preset);
   }
 
   const mapped = joints.map((j) => {
     if (!j.connectorId) return j;
-    const c = getConnector(j.connectorId);
+    const c = getP2M3Connector(j.connectorId);
     if (c && isM1Shape(c.id)) {
       return { ...j, shape: c.id };
     }

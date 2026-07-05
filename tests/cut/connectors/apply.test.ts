@@ -81,4 +81,23 @@ describe("applyConnectors", () => {
       r.jointPieces.forEach((p: any) => p.delete());
     });
   });
+
+  it("integral connector fuses male on partA, cuts a catch in partB, emits no piece", () => {
+    const j = {
+      id: "j",
+      position: [0, 0, 0] as [number, number, number],
+      axis: [0, 0, 1] as [number, number, number],
+      diameter: 8,
+      length: 10,
+      source: "auto" as const,
+      connectorId: "cantilever-clip",
+    };
+    const a = box(), b = box();
+    const aVol = a.volume(), bVol = b.volume();
+    const r = applyConnectors(M, a, b, [j], "pla-tight");
+    expect(r.partA.volume()).toBeGreaterThan(aVol);
+    expect(r.partB.volume()).toBeLessThan(bVol);
+    expect(r.jointPieces.length).toBe(0);
+    r.partA.delete(); r.partB.delete(); a.delete(); b.delete();
+  });
 });
