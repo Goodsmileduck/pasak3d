@@ -5,7 +5,7 @@ import { buildJointSolid } from "./joints/shapes";
 export type TestFitOpts = {
   count: number; step: number; baseClearance: number;
   cubeSize: number; keyDepth: number; keyWidth: number;
-  shape: JointShape; shuffleShapes?: boolean;
+  shape?: JointShape; shuffleShapes?: boolean; connectorId?: string;
 };
 
 export type CouponPair = {
@@ -69,7 +69,7 @@ export function generateTestFitPairs(M: any, opts: TestFitOpts): TestFitPair[] {
   const pairs: TestFitPair[] = [];
   for (let i = 0; i < opts.count; i++) {
     const clearance = opts.baseClearance + i * opts.step;
-    const shape = opts.shuffleShapes ? JOINT_SHAPES[i % JOINT_SHAPES.length] : opts.shape;
+    const shape = opts.shuffleShapes ? JOINT_SHAPES[i % JOINT_SHAPES.length] : opts.shape ?? "cylinder";
     pairs.push(buildPair(M, shape, opts, clearance, i));
   }
   return pairs;

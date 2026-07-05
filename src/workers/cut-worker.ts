@@ -5,7 +5,8 @@ import { planeCutMesh } from "../lib/cut/plane-cut";
 import { separateComponents } from "../lib/cut/separate";
 import { applyConnectors } from "../lib/cut/connectors/apply";
 import { applySeamLabel } from "../lib/cut/joints/labels";
-import { generateTestFitPairs, type TestFitOpts } from "../lib/cut/test-fit";
+import { getConnector } from "../lib/cut/connectors/registry";
+import { generateConnectorTestFit, generateTestFitPairs, type TestFitOpts } from "../lib/cut/test-fit";
 import type { CutPlaneSpec, Joint, TolerancePreset } from "../types";
 
 export type SerializedMesh = { positions: Float32Array; indices: Uint32Array };
@@ -67,7 +68,9 @@ self.onmessage = async (e: MessageEvent<CutWorkerRequest>) => {
   try {
     const M = await getWorkerManifold();
     if (e.data.op === "testfit") {
-      const pairs = generateTestFitPairs(M, e.data.testfit);
+      const pairs = e.data.testfit.connectorId
+        ? generateConnectorTestFit(M, getConnector(e.data.testfit.connectorId)!, e.data.testfit)
+        : generateTestFitPairs(M, e.data.testfit);
       const couponManifolds = pairs.flatMap((p) => [
         { name: p.maleName, manifold: p.male },
         { name: p.femaleName, manifold: p.female },

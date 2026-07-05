@@ -61,9 +61,21 @@ export async function runTestFit(opts: TestFitOpts): Promise<ExportItem[]> {
 
   return submit(req, [], (resp) => {
     if ("coupons" in resp) {
-      return resp.coupons.map((c) => ({ name: c.name, mesh: deserializeMesh(c.mesh) }));
+      return hydrateCoupons(resp.coupons);
     }
     throw new Error("Unexpected cut response for test-fit request");
+  });
+}
+
+export async function runConnectorTestFit(connectorId: string, opts: TestFitOpts): Promise<ExportItem[]> {
+  const reqId = nextReqId++;
+  const req: CutWorkerRequest = { reqId, op: "testfit", testfit: { ...opts, connectorId } };
+
+  return submit(req, [], (resp) => {
+    if ("coupons" in resp) {
+      return hydrateCoupons(resp.coupons);
+    }
+    throw new Error("Unexpected cut response for connector test-fit request");
   });
 }
 
@@ -163,6 +175,10 @@ export function deserializeMesh(s: SerializedMesh): THREE.Mesh {
   m.castShadow = true;
   m.receiveShadow = true;
   return m;
+}
+
+function hydrateCoupons(coupons: { name: string; mesh: SerializedMesh }[]): ExportItem[] {
+  return coupons.map((c) => ({ name: c.name, mesh: deserializeMesh(c.mesh) }));
 }
 
 export function deserialize(s: SerializedMesh): THREE.Group {

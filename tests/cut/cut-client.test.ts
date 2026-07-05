@@ -7,9 +7,10 @@ import { planeCutMesh } from "../../src/lib/cut/plane-cut";
 import { applyDowels } from "../../src/lib/cut/dowel-apply";
 import { applyConnectors } from "../../src/lib/cut/connectors/apply";
 import { applySeamLabel } from "../../src/lib/cut/joints/labels";
-import { runCut, runLabel, runSeparate, runTestFit } from "../../src/lib/cut/cut-client";
+import { runConnectorTestFit, runCut, runLabel, runSeparate, runTestFit } from "../../src/lib/cut/cut-client";
 import { separateComponents } from "../../src/lib/cut/separate";
-import { generateTestFitPairs } from "../../src/lib/cut/test-fit";
+import { generateConnectorTestFit, generateTestFitPairs } from "../../src/lib/cut/test-fit";
+import { getConnector } from "../../src/lib/cut/connectors/registry";
 import type { CutWorkerRequest, CutWorkerResponse, SerializedMesh } from "../../src/workers/cut-worker";
 
 function serialize(man: any): SerializedMesh {
@@ -32,7 +33,9 @@ class CutClientWorker {
   private async respond(req: CutWorkerRequest): Promise<void> {
     const M = await initManifold();
     if (req.op === "testfit") {
-      const pairs = generateTestFitPairs(M, req.testfit);
+      const pairs = req.testfit.connectorId
+        ? generateConnectorTestFit(M, getConnector(req.testfit.connectorId)!, req.testfit)
+        : generateTestFitPairs(M, req.testfit);
       const coupons = pairs.flatMap((p) => [
         { name: p.maleName, mesh: serialize(p.male) },
         { name: p.femaleName, mesh: serialize(p.female) },
@@ -135,6 +138,16 @@ describe("cut pipeline (in-process equivalent of worker)", () => {
     expect(items.length).toBe(4);
     expect(items.some((i) => i.name.endsWith("_A.stl"))).toBe(true);
     expect(items.some((i) => i.name.endsWith("_B.stl"))).toBe(true);
+    vi.unstubAllGlobals();
+  });
+
+  it("runConnectorTestFit returns hydrated coupons for a connector", async () => {
+    vi.stubGlobal("Worker", CutClientWorker);
+    const items = await runConnectorTestFit("snap-pin", {
+      count: 2, step: 0.05, baseClearance: 0.2, cubeSize: 14, keyDepth: 6, keyWidth: 8,
+    });
+    expect(items.length).toBe(4);
+    expect(items.some((i) => i.name.includes("snap-pin"))).toBe(true);
     vi.unstubAllGlobals();
   });
 
