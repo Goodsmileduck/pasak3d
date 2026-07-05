@@ -800,27 +800,419 @@ git commit -m "docs(p2-m2): keyed-catalog (T-slot) smoke checklist"
 
 ---
 
-# P2-M3 — Snap-fit set (outline)
+# P2-M3 — Snap-fit set
 
-Highest geometry risk — extra review on undercut manifoldness + printability. Locked interfaces:
+Deliverable: three locking connectors — `snap-pin` and `snap-dovetail` (separate-piece, reuse the P2-M2
+generic path) and `cantilever-clip` (integral, needs a new apply path). Highest geometry risk: undercut
+manifoldness. Real-world snap tuning is done via the connector test-fit (P2-M4); here we build valid,
+correctly-shaped geometry and prove the undercut/fit properties.
 
-- **`snap-pin`** (`connectors/snap/snap-pin.ts`, separate-piece): `piece` = stem cylinder + a barb (cone/
-  hemisphere wider than the stem) at each end; `femaleCavity` = stem bore + a relief groove (torus/step)
-  wider than the bore at barb depth so the barb catches. Undercut = the relief is wider than the mouth.
-- **`snap-dovetail`** (separate-piece): dovetail key + a detent bump; cavity has a matching dimple that
-  clicks at full insertion.
-- **`cantilever-clip`** (`integral`): `integralMale` = a flexible arm with a hook fused onto the source half;
-  `femaleCavity` = a catch ledge recessed into the receiving half; `piece` = null.
-- **Integral apply path** in `connectors/apply.ts`: for `assembly === "integral"`, `union` `integralMale`
-  onto the source half (which half = the placement's side; default partA) and `subtract` `femaleCavity` from
-  the receiving half; emit no piece.
-- Tests `tests/cut/connectors/snap/*`: each build is a valid manifold (`status NoError`); **undercut check**
-  — the cavity cross-section is wider at barb depth than at the mouth; **snap fit** — piece shifted by
-  ~clearance still fits the cavity; integral: source half gains volume (male fused), receiver loses volume
-  (catch), no piece emitted.
-- Tasks: (1) integral apply path + test; (2) snap-pin + undercut/fit tests; (3) snap-dovetail + tests;
-  (4) cantilever-clip + integral tests; (5) registry+UI (Snap category populated); (6) verify +
-  `docs/p2-m3-snapfit-smoke-test.md`; STOP.
+**Geometry conventions:** every connector solid is built in local space, extruded/centered along +Z (the
+seam normal), so `placeSolid`/`applySeparatePiece`/the integral path seat it exactly like M1 pieces.
+Validate `status() === "NoError"` after every boolean; overlap primitives before union (no coincident
+faces); `.delete()` every intermediate.
+
+## File structure (P2-M3)
+
+- Create `src/lib/cut/connectors/snap/{snap-pin,snap-dovetail,cantilever-clip}.ts`.
+- Modify `src/lib/cut/connectors/apply.ts` — add the `integral` assembly apply path.
+- Modify `src/lib/cut/connectors/registry.ts` — register the three (populates the Snap category).
+- Tests: `tests/cut/connectors/snap/*`, extend `tests/cut/connectors/apply.test.ts`.
+
+---
+
+### Task 11: `snap-pin` connector (separate-piece, barb + relief undercut)
+
+**Files:**
+- Create: `src/lib/cut/connectors/snap/snap-pin.ts`
+- Test: `tests/cut/connectors/snap/snap-pin.test.ts`
+
+**Interfaces:**
+- Produces `snapPinConnector: Connector` (id `"snap-pin"`, category `"snap"`, assembly `"separate-piece"`).
+  `piece` = a stem cylinder with a spherical barb (radius > stem) at each end. `femaleCavity` = a bore
+  (stem radius + clearance) with a spherical relief chamber (barb radius + clearance) at each end — the
+  chamber is wider than the bore mouth, so the barb must flex past to seat (the undercut).
+- Consumes: `Connector`/`ConnectorParams`.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/cut/connectors/snap/snap-pin.test.ts
+import { describe, it, expect, beforeAll } from "vitest";
+import { initManifold } from "../../../../src/lib/cut/manifold";
+import { snapPinConnector } from "../../../../src/lib/cut/connectors/snap/snap-pin";
+
+let M: any;
+beforeAll(async () => { M = await initManifold(); });
+const p = { size: 6, length: 16, clearance: 0.2 };
+
+// X-width of a thin Z-slab of a solid (proves cross-section width at a depth).
+function widthAtZ(solid: any, z: number): number {
+  const probe = M.Manifold.cube([40, 40, 1], true).translate([0, 0, z]);
+  const slice = solid.intersect(probe);
+  const bb = slice.boundingBox();
+  const w = slice.isEmpty() ? 0 : bb.max[0] - bb.min[0];
+  probe.delete(); slice.delete();
+  return w;
+}
+
+describe("snapPinConnector", () => {
+  it("is a snap separate-piece connector", () => {
+    expect(snapPinConnector.category).toBe("snap");
+    expect(snapPinConnector.assembly).toBe("separate-piece");
+  });
+
+  it("piece and cavity are valid manifolds", () => {
+    const piece = snapPinConnector.build.piece(M, p)!;
+    const cavity = snapPinConnector.build.femaleCavity(M, p);
+    expect(piece.status()).toBe("NoError");
+    expect(cavity.status()).toBe("NoError");
+    piece.delete(); cavity.delete();
+  });
+
+  it("cavity has an UNDERCUT — the end chamber is wider than the mid bore", () => {
+    const cavity = snapPinConnector.build.femaleCavity(M, p);
+    const boreW = widthAtZ(cavity, 0);            // middle = narrow bore
+    const chamberW = widthAtZ(cavity, p.length / 2 - 0.5); // near end = wide chamber
+    expect(chamberW).toBeGreaterThan(boreW + 1);
+    cavity.delete();
+  });
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL** (`snapPinConnector` not defined)
+
+Run: `npx vitest run tests/cut/connectors/snap/snap-pin.test.ts`
+
+- [ ] **Step 3: Implement `snap-pin`**
+
+```ts
+// src/lib/cut/connectors/snap/snap-pin.ts
+import type { Connector, ConnectorParams } from "../types";
+
+function pinSolid(M: any, size: number, length: number, grow: number): any {
+  const rStem = size / 2 + grow;
+  const rBarb = (size / 2) * 1.6 + grow;
+  const stem = M.Manifold.cylinder(length, rStem, rStem, 64, true);
+  const top = M.Manifold.sphere(rBarb, 48).translate([0, 0, length / 2]);
+  const bot = M.Manifold.sphere(rBarb, 48).translate([0, 0, -length / 2]);
+  const withTop = stem.add(top);
+  const out = withTop.add(bot);
+  stem.delete(); top.delete(); bot.delete(); withTop.delete();
+  return out;
+}
+
+export const snapPinConnector: Connector = {
+  id: "snap-pin",
+  name: "Snap pin",
+  category: "snap",
+  assembly: "separate-piece",
+  defaults: { clearance: 0.25 },
+  describe: "Snap pin - barbed ends catch in each socket",
+  build: {
+    femaleCavity: (M: any, p: ConnectorParams) => pinSolid(M, p.size, p.length, p.clearance),
+    piece: (M: any, p: ConnectorParams) => pinSolid(M, p.size, p.length, 0),
+    integralMale: undefined,
+  },
+};
+```
+
+(The cavity is the pin shape grown by `clearance`; subtracted from both halves it leaves a narrow bore + a
+wide end chamber — the barb flexes through the bore and catches in the chamber.)
+
+- [ ] **Step 4: Run — expect PASS**
+
+Run: `npx vitest run tests/cut/connectors/snap/snap-pin.test.ts`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/cut/connectors/snap/snap-pin.ts tests/cut/connectors/snap/snap-pin.test.ts
+git commit -m "feat(connectors): snap-pin — barbed stem + relief-chamber undercut cavity"
+```
+
+---
+
+### Task 12: `snap-dovetail` connector (separate-piece, dovetail + detent)
+
+**Files:**
+- Create: `src/lib/cut/connectors/snap/snap-dovetail.ts`
+- Test: `tests/cut/connectors/snap/snap-dovetail.test.ts`
+
+**Interfaces:**
+- Produces `snapDovetailConnector: Connector` (id `"snap-dovetail"`, snap, separate-piece). `piece` = the
+  M1 dovetail solid (`buildJointSolid` shape `"dovetail"`) unioned with a small detent sphere on a face.
+  `femaleCavity` = the dovetail grown by clearance unioned with a detent sphere (radius + clearance) at the
+  same spot — the socket gets a dimple the bump clicks into.
+- Consumes: `buildJointSolid` (`joints/shapes.ts`).
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/cut/connectors/snap/snap-dovetail.test.ts
+import { describe, it, expect, beforeAll } from "vitest";
+import { initManifold } from "../../../../src/lib/cut/manifold";
+import { buildJointSolid } from "../../../../src/lib/cut/joints/shapes";
+import { snapDovetailConnector } from "../../../../src/lib/cut/connectors/snap/snap-dovetail";
+
+let M: any;
+beforeAll(async () => { M = await initManifold(); });
+const p = { size: 8, length: 14, clearance: 0.2 };
+
+describe("snapDovetailConnector", () => {
+  it("is a snap separate-piece connector with valid geometry", () => {
+    expect(snapDovetailConnector.assembly).toBe("separate-piece");
+    const piece = snapDovetailConnector.build.piece(M, p)!;
+    const cavity = snapDovetailConnector.build.femaleCavity(M, p);
+    expect(piece.status()).toBe("NoError");
+    expect(cavity.status()).toBe("NoError");
+    piece.delete(); cavity.delete();
+  });
+
+  it("the detent adds volume over a plain dovetail (a real bump/dimple)", () => {
+    const plain = buildJointSolid(M, { shape: "dovetail", diameter: p.size, length: p.length, grow: 0 });
+    const piece = snapDovetailConnector.build.piece(M, p)!;
+    expect(piece.volume()).toBeGreaterThan(plain.volume());
+    plain.delete(); piece.delete();
+  });
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL**
+
+Run: `npx vitest run tests/cut/connectors/snap/snap-dovetail.test.ts`
+
+- [ ] **Step 3: Implement `snap-dovetail`**
+
+```ts
+// src/lib/cut/connectors/snap/snap-dovetail.ts
+import type { Connector, ConnectorParams } from "../types";
+import { buildJointSolid } from "../../joints/shapes";
+
+function dovetailWithDetent(M: any, size: number, length: number, grow: number): any {
+  const body = buildJointSolid(M, { shape: "dovetail", diameter: size, length, grow });
+  const rDetent = size * 0.18 + grow;
+  // Detent on the +X face at mid-height/mid-length; overlaps the body so the union is clean.
+  const detent = M.Manifold.sphere(rDetent, 32).translate([size / 2, 0, 0]);
+  const out = body.add(detent);
+  body.delete(); detent.delete();
+  return out;
+}
+
+export const snapDovetailConnector: Connector = {
+  id: "snap-dovetail",
+  name: "Snap dovetail",
+  category: "snap",
+  assembly: "separate-piece",
+  defaults: { clearance: 0.2 },
+  describe: "Snap dovetail - slides in, detent clicks at seat",
+  build: {
+    femaleCavity: (M: any, p: ConnectorParams) => dovetailWithDetent(M, p.size, p.length, p.clearance),
+    piece: (M: any, p: ConnectorParams) => dovetailWithDetent(M, p.size, p.length, 0),
+    integralMale: undefined,
+  },
+};
+```
+
+- [ ] **Step 4: Run — expect PASS**
+
+Run: `npx vitest run tests/cut/connectors/snap/snap-dovetail.test.ts`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/cut/connectors/snap/snap-dovetail.ts tests/cut/connectors/snap/snap-dovetail.test.ts
+git commit -m "feat(connectors): snap-dovetail — dovetail key with a detent bump/dimple"
+```
+
+---
+
+### Task 13: Integral apply path + `cantilever-clip`
+
+**Files:**
+- Create: `src/lib/cut/connectors/snap/cantilever-clip.ts`
+- Modify: `src/lib/cut/connectors/apply.ts` (integral path)
+- Test: `tests/cut/connectors/snap/cantilever-clip.test.ts`, `tests/cut/connectors/apply.test.ts`
+
+**Interfaces:**
+- `cantileverClipConnector: Connector` (id `"cantilever-clip"`, snap, assembly `"integral"`). `integralMale`
+  = a beam (box) extruded from the seam along +Z with a hook (box) at the tip offset in +X; fused onto the
+  source half. `femaleCavity` = a slot (beam + clearance) plus a catch recess (wider in +X at the hook
+  depth = undercut); subtracted from the receiving half. `piece` = null.
+- `applyConnectors`: when the connector's `assembly === "integral"`, run `applyIntegral(M, partA, partB,
+  joints, connector)` — for each placement: `union` the placed `integralMale` onto `partA` (source),
+  `subtract` the placed `femaleCavity` from `partB` (receiver); emit no piece. Ownership mirrors
+  `applySeparatePiece` (never delete input partA/partB; delete every intermediate/local).
+
+- [ ] **Step 1: Write the failing tests**
+
+```ts
+// tests/cut/connectors/snap/cantilever-clip.test.ts
+import { describe, it, expect, beforeAll } from "vitest";
+import { initManifold } from "../../../../src/lib/cut/manifold";
+import { cantileverClipConnector } from "../../../../src/lib/cut/connectors/snap/cantilever-clip";
+
+let M: any;
+beforeAll(async () => { M = await initManifold(); });
+const p = { size: 8, length: 14, clearance: 0.2 };
+
+it("cantilever clip is integral: has integralMale, no piece", () => {
+  expect(cantileverClipConnector.assembly).toBe("integral");
+  const male = cantileverClipConnector.build.integralMale!(M, p);
+  expect(male).not.toBeNull();
+  expect(male.status()).toBe("NoError");
+  expect(cantileverClipConnector.build.piece(M, p)).toBeNull();
+  male.delete();
+});
+```
+
+```ts
+// tests/cut/connectors/apply.test.ts — add
+it("integral connector fuses male on partA, cuts a catch in partB, emits no piece", () => {
+  const j = { id: "j", position: [0, 0, 0] as [number, number, number],
+    axis: [0, 0, 1] as [number, number, number], diameter: 8, length: 10,
+    source: "auto" as const, connectorId: "cantilever-clip" };
+  const a = box(), b = box();
+  const aVol = a.volume(), bVol = b.volume();
+  const r = applyConnectors(M, a, b, [j], "pla-tight");
+  expect(r.partA.volume()).toBeGreaterThan(aVol);  // male fused onto source
+  expect(r.partB.volume()).toBeLessThan(bVol);      // catch cut into receiver
+  expect(r.jointPieces.length).toBe(0);             // integral = no separate piece
+  r.partA.delete(); r.partB.delete(); a.delete(); b.delete();
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL**
+
+Run: `npx vitest run tests/cut/connectors/snap/cantilever-clip.test.ts tests/cut/connectors/apply.test.ts`
+
+- [ ] **Step 3: Implement the clip + integral path**
+
+```ts
+// src/lib/cut/connectors/snap/cantilever-clip.ts
+import type { Connector, ConnectorParams } from "../types";
+
+// Beam extruded from z=0 (seam) to z=length along +Z, hook (a wider box) at the tip in +X.
+function clipMale(M: any, size: number, length: number): any {
+  const beamW = size * 0.6, beamT = size * 0.35;
+  const beam = M.Manifold.cube([beamW, beamT, length], false).translate([-beamW / 2, -beamT / 2, 0]);
+  const hookW = size * 0.35, hookH = size * 0.3;
+  const hook = M.Manifold.cube([hookW, beamT, hookH], false)
+    .translate([beamW / 2 - hookW * 0.2, -beamT / 2, length - hookH]);
+  const out = beam.add(hook);
+  beam.delete(); hook.delete();
+  return out;
+}
+
+function clipCavity(M: any, size: number, length: number, grow: number): any {
+  const beamW = size * 0.6 + 2 * grow, beamT = size * 0.35 + 2 * grow;
+  const slot = M.Manifold.cube([beamW, beamT, length + grow], false).translate([-beamW / 2, -beamT / 2, 0]);
+  // Catch recess: wider in +X at the hook depth → the undercut that grabs the hook.
+  const catchW = size * 0.55 + grow, catchH = size * 0.35 + 2 * grow;
+  const rec = M.Manifold.cube([catchW, beamT, catchH], false)
+    .translate([beamW / 2 - catchW * 0.2, -beamT / 2, length - catchH]);
+  const out = slot.add(rec);
+  slot.delete(); rec.delete();
+  return out;
+}
+
+export const cantileverClipConnector: Connector = {
+  id: "cantilever-clip",
+  name: "Cantilever clip",
+  category: "snap",
+  assembly: "integral",
+  defaults: { clearance: 0.25 },
+  describe: "Cantilever clip - hook molded into one part, catch in the other",
+  build: {
+    femaleCavity: (M: any, p: ConnectorParams) => clipCavity(M, p.size, p.length, p.clearance),
+    piece: () => null,
+    integralMale: (M: any, p: ConnectorParams) => clipMale(M, p.size, p.length),
+  },
+};
+```
+
+In `apply.ts` add `applyIntegral` and dispatch on `connector.assembly === "integral"` in `applyConnectors`
+(before the separate-piece branch):
+
+```ts
+function applyIntegral(
+  M: any, partA: any, partB: any, joints: Joint[], connector: Connector,
+): ApplyJointsResult {
+  let outA = partA, outB = partB;
+  for (const j of joints) {
+    const p = resolveConnectorParams(j, /* preset threaded in */ "pla-tight"); // pass preset param
+    const maleLocal = connector.build.integralMale!(M, p);
+    const male = placeSolid(maleLocal, j.position, j.axis); maleLocal.delete();
+    const newA = outA.add(male); if (outA !== partA) outA.delete(); outA = newA; male.delete();
+    const cavLocal = connector.build.femaleCavity(M, p);
+    const cav = placeSolid(cavLocal, j.position, j.axis); cavLocal.delete();
+    const newB = outB.subtract(cav); if (outB !== partB) outB.delete(); outB = newB; cav.delete();
+  }
+  return { partA: outA, partB: outB, jointPieces: [] };
+}
+```
+
+(Thread `preset` into `applyIntegral` like `applySeparatePiece` — do not hardcode `"pla-tight"`.) In
+`applyConnectors`, after resolving the connector `c` for a non-M1 id: `if (c.assembly === "integral")
+return applyIntegral(M, partA, partB, joints, c, preset);` else the existing `applySeparatePiece`.
+
+- [ ] **Step 4: Run — expect PASS** (new + all existing connector/joint tests)
+
+Run: `npx vitest run tests/cut/`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/cut/connectors/snap/cantilever-clip.ts src/lib/cut/connectors/apply.ts tests/cut/connectors/snap/cantilever-clip.test.ts tests/cut/connectors/apply.test.ts
+git commit -m "feat(connectors): cantilever-clip + integral apply path (fuse male, cut catch)"
+```
+
+---
+
+### Task 14: Register the snap set + P2-M3 verification + smoke doc
+
+**Files:**
+- Modify: `src/lib/cut/connectors/registry.ts`
+- Test: `tests/cut/connectors/registry.test.ts` (update — Snap category now populated)
+
+- [ ] **Step 1: Update the registry test**
+
+```ts
+// tests/cut/connectors/registry.test.ts — change the snap expectation
+it("lists snap connectors after P2-M3", () => {
+  const snap = listByCategory("snap").map((c) => c.id).sort();
+  expect(snap).toEqual(["cantilever-clip", "snap-dovetail", "snap-pin"]);
+});
+```
+
+- [ ] **Step 2: Run — expect FAIL** (snap category still empty)
+
+Run: `npx vitest run tests/cut/connectors/registry.test.ts`
+
+- [ ] **Step 3: Register the three**
+
+In `registry.ts`: import the three snap connectors and add them to `ALL`:
+`const ALL = [...m1KeyedConnectors(), tSlotConnector, snapPinConnector, snapDovetailConnector, cantileverClipConnector];`
+
+- [ ] **Step 4: Run — expect PASS**
+
+Run: `npx vitest run tests/cut/`
+
+- [ ] **Step 5: Full verification + smoke doc**
+
+Run: `npm run test && npm run typecheck && npm run build:web && npm run build`
+Write `docs/p2-m3-snapfit-smoke-test.md` (existing style): for each snap connector, cut, confirm the pieces
+print and the snap seats/holds; note recommended print orientation for the undercuts and that final
+clearance is dialed via the connector test-fit (P2-M4).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/lib/cut/connectors/registry.ts tests/cut/connectors/registry.test.ts docs/p2-m3-snapfit-smoke-test.md
+git commit -m "feat(connectors): register snap-fit set; docs(p2-m3): snap-fit smoke checklist"
+```
+
+- [ ] **STOP — pause for user review before P2-M4.**
 
 ---
 
