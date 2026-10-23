@@ -9,6 +9,7 @@ interface StatusBarProps {
   parts?: Array<{ visible: boolean; isDowel: boolean; group: THREE.Group }>;
   printer?: PrinterPreset | null;
   onSuggestCuts?: () => void;
+  onAutoSplit?: () => void;
 }
 
 function formatFileSize(bytes: number): string {
@@ -43,8 +44,8 @@ function FitIndicator({
 
   if (tooBig.length === 0) {
     return (
-      <span className="ml-auto px-2 py-0.5 rounded-full text-xs bg-[var(--success-tint)] text-[var(--success)]">
-        All parts fit {printer.name}
+      <span className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-[var(--success-tint)] text-[var(--success)]">
+        <span>All parts fit {printer.name}</span>
       </span>
     );
   }
@@ -61,8 +62,9 @@ function FitIndicator({
   );
 }
 
-export function StatusBar({ info, error, isLoading, parts, printer, onSuggestCuts }: StatusBarProps) {
+export function StatusBar({ info, error, isLoading, parts, printer, onSuggestCuts, onAutoSplit }: StatusBarProps) {
   const separator = "hidden md:inline text-[var(--ink-faint)]";
+  const hasAutoSplitTarget = parts?.some((p) => p.visible && !p.isDowel) ?? false;
 
   return (
     <div className="flex items-center gap-2 md:gap-4 px-2 md:px-3 py-1 border-t border-[var(--border)] text-xs shrink-0 select-none bg-[var(--surface)] text-[var(--ink-muted)]">
@@ -82,7 +84,16 @@ export function StatusBar({ info, error, isLoading, parts, printer, onSuggestCut
             {info.dimensions.x.toFixed(1)} × {info.dimensions.y.toFixed(1)} × {info.dimensions.z.toFixed(1)} mm
           </span>
           {parts !== undefined && (
-            <FitIndicator parts={parts} printer={printer} onSuggestCuts={onSuggestCuts} />
+            <FitIndicator
+              parts={parts}
+              printer={printer}
+              onSuggestCuts={onSuggestCuts}
+            />
+          )}
+          {onAutoSplit && hasAutoSplitTarget && (
+            <button className="underline hover:no-underline" onClick={onAutoSplit}>
+              Auto-Split
+            </button>
           )}
         </>
       )}

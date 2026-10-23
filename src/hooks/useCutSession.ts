@@ -3,6 +3,7 @@ import * as THREE from "three";
 import type { Dowel, CutPlaneSpec, TolerancePreset, ModelData, PartId, PrinterPreset } from "../types";
 import { runCut, runLabel, runSeparate } from "../lib/cut/cut-client";
 import { autoPlaceCutDowels } from "../lib/cut/auto-place-cut-dowels";
+import { planeSeparatesMesh } from "../lib/cut/plane-util";
 import { centerOnXY } from "../lib/scene";
 import {
   emptySession,
@@ -215,6 +216,67 @@ export function useCutSession() {
     [session, push],
   );
 
+  const performAutoSplitCuts = useCallback(
+    async (
+      rootPartId: PartId,
+      planes: CutPlaneSpec[],
+      defaultDowelOpts: { count: number; diameter: number; length: number; tolerance: TolerancePreset },
+    ) => {
+      if (planes.length === 0) return;
+      setBusy(true);
+      setError(null);
+      let working = session;
+      let leaves: PartId[] = [rootPartId];
+      let applied = 0;
+      try {
+        for (const plane of planes) {
+          const targetId = leaves.find((id) => {
+            const p = working.parts.get(id);
+            return p ? planeSeparatesMesh(p.mesh, plane) : false;
+          });
+          if (!targetId) continue;
+
+          const part = working.parts.get(targetId)!;
+          try {
+            const dowels = autoPlaceCutDowels(part.mesh, plane, {
+              count: defaultDowelOpts.count,
+              dowelDiameter: defaultDowelOpts.diameter,
+              length: defaultDowelOpts.length,
+              minSpacing: 2,
+            });
+            const result = await runCut(part.mesh, plane, dowels, defaultDowelOpts.tolerance);
+            const a = firstMeshAndGroup(result.partA);
+            const b = firstMeshAndGroup(result.partB);
+            if (!a || !b) continue;
+            const dps = result.dowelPieces
+              .map(firstMeshAndGroup)
+              .filter((x): x is { mesh: THREE.Mesh; group: THREE.Group } => !!x);
+            working = applyCutResult(
+              working,
+              targetId,
+              `c${working.cuts.length + 1}`,
+              { partA: a, partB: b, dowelPieces: dps },
+              part.meta.name,
+            );
+            leaves = leaves
+              .filter((id) => id !== targetId)
+              .concat([`${targetId}_a` as PartId, `${targetId}_b` as PartId]);
+            applied++;
+          } catch {
+            // Skip a plane that fails its selected leaf; preserve earlier successful cuts.
+          }
+        }
+        if (applied > 0) {
+          syncSessionColors(working);
+          push(working);
+        }
+      } finally {
+        setBusy(false);
+      }
+    },
+    [session, push],
+  );
+
   const undo = useCallback(() => {
     if (history.length === 0) return;
     const prev = history[history.length - 1];
@@ -258,6 +320,7 @@ export function useCutSession() {
     performSeparate,
     performLabel,
     performCutsSequential,
+    performAutoSplitCuts,
     undo,
     redo,
     canUndo: history.length > 0,

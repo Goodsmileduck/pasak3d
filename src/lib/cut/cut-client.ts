@@ -92,6 +92,16 @@ export async function runSeparate(mesh: THREE.Mesh): Promise<THREE.Group[]> {
   });
 }
 
+export async function runSegment(mesh: THREE.Mesh, opts: { maxParts: number; detail: number }): Promise<CutPlaneSpec[]> {
+  const reqId = nextReqId++;
+  const { meshGeometry, transfer } = serializeMeshForWorker(mesh);
+  const req: CutWorkerRequest = { reqId, op: "segment", meshGeometry, opts };
+  return submit(req, transfer, (resp) => {
+    if ("planes" in resp) return resp.planes;
+    throw new Error("Unexpected response for segment request");
+  });
+}
+
 export async function runLabel(
   mesh: THREE.Mesh,
   spec: {
